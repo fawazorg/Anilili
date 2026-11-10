@@ -36,7 +36,7 @@ object AnnouncementSource {
 
     /** The same signed event served as a file, so the common case is one request, not a relay scan. */
     const val MIRROR_URL =
-        "https://huggingface.co/HF_USER/HF_REPO/resolve/main/latest/announcement.json"
+        "https://huggingface.co/pommieye/kitsune-7b/resolve/main/latest/announcement.json"
 
     /**
      * The newest valid announcement, or null when there is nothing to say.

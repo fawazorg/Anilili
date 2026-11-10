@@ -17,8 +17,8 @@ val diagnosticBuildSha = providers.environmentVariable("GITHUB_SHA").orNull
             isIgnoreExitValue = true
         }.standardOutput.asText.get().trim()
     }.getOrDefault("unknown").ifBlank { "unknown" }
-val appVersionCode = 96
-val appVersionName = "0.1.84"
+val appVersionCode = 97
+val appVersionName = "0.1.85"
 val openSubtitlesApiKey = providers.gradleProperty("openSubtitlesApiKey").orNull
     ?: providers.environmentVariable("OPEN_SUBTITLES_API_KEY").orNull
     ?: ""
@@ -87,7 +87,15 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            signingConfig = signingConfigs.getByName("release")
+            // No keystore.properties means no release key on this machine. Falling back to the
+            // debug key keeps `assembleRelease` — and the R8/proguard build it exercises —
+            // runnable anywhere; such an APK cannot replace an existing release install, so the
+            // release workflow publishes builds made without the real keystore as drafts.
+            signingConfig = if (keystoreProperties.getProperty("storeFile") != null) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
             manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
@@ -222,8 +230,12 @@ val parityCorpus: File? = generateSequence(rootProject.projectDir.parentFile) { 
     .firstOrNull { it.isDirectory }
 val syncParityCorpus = tasks.register<Sync>("syncParityCorpus") {
     description = "Refreshes src/test/resources/parity from ../anilili-desktop/fixtures/parity."
-    onlyIf("the desktop checkout is next to this one") { parityCorpus != null }
-    parityCorpus?.let { from(it) }
+    // Read into a local inside this block on purpose: a lambda that reaches the script-level val
+    // captures the build script object, which the configuration cache cannot serialize — every
+    // build then ended with "cannot serialize Gradle script object references" over this task.
+    val corpus = parityCorpus
+    onlyIf("the desktop checkout is next to this one") { corpus != null }
+    corpus?.let { from(it) }
     into(layout.projectDirectory.dir("src/test/resources/parity"))
 }
 // preBuild rather than the test-resource tasks: everything that reads src/test (resource

@@ -47,7 +47,7 @@ object NostrUpdateSource {
 
     /** Where the signed manifest is mirrored as a file; same event, one request instead of a relay scan. */
     const val MANIFEST_MIRROR_URL =
-        "https://huggingface.co/HF_USER/HF_REPO/resolve/main/latest/update.json"
+        "https://huggingface.co/pommieye/kitsune-7b/resolve/main/latest/update.json"
     const val MANIFEST_D_TAG = "anilili-update"
 
     private val RELAYS = listOf(
