@@ -45,8 +45,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapNotNull
@@ -193,38 +191,25 @@ object EpisodeExport {
                         .forEach { EpisodeExportWorker.enqueue(app, it.id) }
                 }
             }
-            // An export deferred because the viewer was watching, or because downloads were still
-            // running, keeps its place in WorkManager's backoff, which grows with every attempt —
-            // so by the time the deferral ended, the next try could be an hour away. Re-arming
-            // them the moment both are over replaces that wait with a fresh attempt.
+            // An export deferred because the viewer was watching keeps its place in WorkManager's
+            // backoff, which grows with every attempt — so by the time the deferral ended, the
+            // next try could be an hour away. Re-arming them the moment playback stops replaces
+            // that wait with a fresh attempt. Downloads no longer hold an export back: it runs
+            // beside the queue, as soon as its own episode is done, so there is nothing to re-arm
+            // for them.
             playbackWatcher = scope.launch {
-                combine(
-                    PlaybackStatus.isPlaying,
-                    EpisodeDownloads.downloads(app).map(::queueActive).distinctUntilChanged(),
-                ) { playing, downloading -> playing || downloading }
-                    .distinctUntilChanged()
-                    .collect { busy ->
-                        if (busy) return@collect
-                        val pending = pendingIds(app)
-                        if (pending.isEmpty()) return@collect
-                        EpisodeDownloads.downloads(app).value
-                            .asSequence()
-                            .filter { it.isComplete && it.id in pending }
-                            .filter { _statuses.value[it.id]?.state != EpisodeExportState.RUNNING }
-                            .forEach { EpisodeExportWorker.enqueue(app, it.id, restart = true) }
-                    }
+                PlaybackStatus.isPlaying.collect { playing ->
+                    if (playing) return@collect
+                    val pending = pendingIds(app)
+                    if (pending.isEmpty()) return@collect
+                    EpisodeDownloads.downloads(app).value
+                        .asSequence()
+                        .filter { it.isComplete && it.id in pending }
+                        .filter { _statuses.value[it.id]?.state != EpisodeExportState.RUNNING }
+                        .forEach { EpisodeExportWorker.enqueue(app, it.id, restart = true) }
+                }
             }
         }
-    }
-
-    /** Whether the download queue still has work, as the export deferral sees it. */
-    internal fun downloadQueueActive(context: Context): Boolean =
-        queueActive(EpisodeDownloads.downloads(context.applicationContext).value)
-
-    private fun queueActive(downloads: List<EpisodeDownload>): Boolean = downloads.any {
-        it.state == EpisodeDownloadState.QUEUED ||
-            it.state == EpisodeDownloadState.DOWNLOADING ||
-            it.state == EpisodeDownloadState.RESTARTING
     }
 
     /**

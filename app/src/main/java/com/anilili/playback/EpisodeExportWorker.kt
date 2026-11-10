@@ -50,14 +50,15 @@ class EpisodeExportWorker(
             DiagnosticsLog.event("Episode export deferred while playing id=$id")
             return Result.retry()
         }
-        // Likewise for a download queue that is still running: the next episode's segments being
-        // fetched and this one's being rewrapped is two full-size writes at once on one heap, and
-        // two progress notifications at once, which Samsung's System UI groups and re-renders on
-        // every tick. EpisodeExport re-arms this the moment the queue goes idle.
-        if (EpisodeExport.downloadQueueActive(applicationContext)) {
-            DiagnosticsLog.event("Episode export deferred behind running downloads id=$id")
-            return Result.retry()
-        }
+        // A gate used to sit between those two: while any episode in the queue was still QUEUED or
+        // DOWNLOADING, every export was deferred, so a twenty-episode batch downloaded all twenty
+        // before the first MP4 was built — reported exactly that way — and the space plan, which
+        // counts on each cached copy dropping as its MP4 lands, was quietly budgeting for the
+        // whole batch's cache at once instead. An export now runs as soon as its own download is
+        // complete, beside whatever the queue downloads next. performExport already holds one
+        // that arrived ahead of its download in PENDING, the slot below bounds the heap to one
+        // transmux at a time, and the playback yield above remains the one hard gate.
+        //
         // One transmux at a time across the whole process. Yielding the worker slot rather than
         // blocking on it lets WorkManager reuse the thread and bring this item back on its own
         // backoff schedule.
