@@ -3,7 +3,14 @@ import AVKit
 
 @main
 struct PlaybackPOCApp: App {
-    var body: some Scene { WindowGroup { PlaybackView() } }
+    var body: some Scene {
+        WindowGroup {
+            TabView {
+                CatalogView().tabItem { Label("Catalog", systemImage: "magnifyingglass") }
+                PlaybackView().tabItem { Label("Playback", systemImage: "play.rectangle") }
+            }
+        }
+    }
 }
 
 struct PlaybackView: View {

@@ -694,9 +694,10 @@ class AnivexaClient(
         @Suppress("NAME_SHADOWING")
         val providers = ProviderCatalog.providersForCountry(providers, media.countryOfOrigin)
         val aired = media.nextAiringEpisode?.episode?.minus(1)?.takeIf { it > 0 }
+        val totalEpisodes = media.episodes
         val count = when {
             media.status == "RELEASING" && aired != null -> aired
-            media.episodes != null && media.episodes > 0 -> media.episodes
+            totalEpisodes != null && totalEpisodes > 0 -> totalEpisodes
             media.format == "MOVIE" -> 1
             else -> 1
         }

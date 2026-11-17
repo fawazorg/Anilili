@@ -1,5 +1,9 @@
 package com.anilili.data.remote
 
+import com.anilili.catalog.AniListCatalog
+import com.anilili.catalog.AniListCatalogQueries
+import com.anilili.catalog.CatalogHttpResponse
+import com.anilili.catalog.CatalogHttpTransport
 import com.anilili.data.auth.AccountService
 import com.anilili.data.auth.AuthManager
 import com.anilili.data.model.GqlMediaListResponse
@@ -113,28 +117,7 @@ class AniListClient(
         resetHeader?.toLongOrNull()?.let { rateResetMs = it * 1_000 }
     }
 
-    private val mediaListFields = """
-        id
-        idMal
-        title { romaji english native userPreferred }
-        coverImage { large extraLarge color }
-        bannerImage
-        trailer { thumbnail }
-        format
-        season
-        seasonYear
-        episodes
-        duration
-        status
-        averageScore
-        popularity
-        isAdult
-        countryOfOrigin
-        genres
-        studios(isMain: true) { nodes { id name isAnimationStudio } }
-        nextAiringEpisode { episode airingAt timeUntilAiring }
-        startDate { year month day }
-    """.trimIndent()
+    private val mediaListFields = AniListCatalogQueries.listFields
 
     // Home's cinematic hero needs a synopsis, while poster rails and relation nodes stay on the
     // compact field set to keep their payloads small.
@@ -143,40 +126,18 @@ class AniListClient(
         description(asHtml: false)
     """.trimIndent()
 
-    private val mediaFullFields = """
-        id
-        idMal
-        title { romaji english native userPreferred }
-        description(asHtml: false)
-        coverImage { large extraLarge color }
-        bannerImage
-        format
-        season
-        seasonYear
-        episodes
-        duration
-        status
-        averageScore
-        meanScore
-        popularity
-        favourites
-        isAdult
-        countryOfOrigin
-        genres
-        tags { name rank isMediaSpoiler isGeneralSpoiler }
-        studios { nodes { id name isAnimationStudio } }
-        trailer { id site thumbnail }
-        nextAiringEpisode { episode airingAt timeUntilAiring }
-        startDate { year month day }
-        endDate { year month day }
-        streamingEpisodes { title thumbnail url site }
-        relations {
-          edges {
-            relationType
-            node { $mediaListFields }
-          }
-        }
-    """.trimIndent()
+    // Keep Android's existing headers, authentication, throttling and retry policy.
+    // Only catalog query construction and response parsing move into shared code.
+    private val sharedCatalog by lazy {
+        AniListCatalog(
+            transport = CatalogHttpTransport { request ->
+                val payload = json.decodeFromString(GraphQLRequest.serializer(), request.body)
+                CatalogHttpResponse(200, post(payload.query, payload.variables))
+            },
+            endpoint = endpoint,
+            json = json,
+        )
+    }
 
     private suspend fun queryPage(query: String, variables: JsonObject, page: Int): MediaPage =
         withContext(Dispatchers.IO) {
@@ -251,23 +212,8 @@ class AniListClient(
         )
     }
 
-    suspend fun search(query: String, page: Int = 1, perPage: Int = 20, hideAdult: Boolean = false): MediaPage {
-        val gql = """
-            query (${'$'}search: String, ${'$'}page: Int, ${'$'}perPage: Int, ${'$'}isAdult: Boolean) {
-              Page(page: ${'$'}page, perPage: ${'$'}perPage) {
-                pageInfo { hasNextPage currentPage }
-                media(search: ${'$'}search, type: ANIME, sort: SEARCH_MATCH, isAdult: ${'$'}isAdult) { $mediaListFields }
-              }
-            }
-        """.trimIndent()
-        val vars = buildJsonObject {
-            put("search", query)
-            put("page", page)
-            put("perPage", perPage)
-            if (hideAdult) put("isAdult", false)
-        }
-        return queryPage(gql, vars, page)
-    }
+    suspend fun search(query: String, page: Int = 1, perPage: Int = 20, hideAdult: Boolean = false): MediaPage =
+        withContext(Dispatchers.IO) { sharedCatalog.search(query, page, perPage, hideAdult) }
 
     /**
      * Server-side catalog search used by Browse: every selected filter is applied by AniList.
@@ -650,14 +596,7 @@ class AniListClient(
     }
 
     suspend fun animeInfo(id: Int): Media? = withContext(Dispatchers.IO) {
-        val gql = """
-            query (${'$'}id: Int) {
-              Media(id: ${'$'}id, type: ANIME) { $mediaFullFields }
-            }
-        """.trimIndent()
-        val vars = buildJsonObject { put("id", id) }
-        val text = post(gql, vars)
-        json.decodeFromString(GqlMediaResponse.serializer(), text).data?.media
+        sharedCatalog.details(id)
     }
 
     /**
