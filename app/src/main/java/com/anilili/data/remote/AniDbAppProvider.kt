@@ -1,5 +1,11 @@
 package com.anilili.data.remote
 
+import com.anilili.provider.AniDbSourceParser
+import com.anilili.catalog.CatalogFailure
+import com.anilili.catalog.CatalogFailureKind
+import com.anilili.episodes.PlaybackRedirectPolicy
+import com.anilili.catalog.CatalogException
+import com.anilili.episodes.PlaybackFormat
 import com.anilili.data.model.Media
 import com.anilili.data.model.SourcesResult
 import com.anilili.data.model.StreamItem
@@ -132,11 +138,18 @@ internal class AniDbAppProvider(
             ?: error("AniDB App episode $episode was not found")
         val server = AniDbAppParser.serverForAudio(servers(providerEpisode), audio)
             ?: error("AniDB App episode $episode has no ${audio.uppercase()} source")
-        val hls = AniDbAppParser.link(json.parseToJsonElement(playGet("episode/${server.path}/iframe")))
-            ?: error("AniDB App episode $episode returned no direct HLS stream")
+        val sourcePath = "episode/${server.path}/iframe"
+        val source = AniDbSourceParser.parse(
+            playGet(sourcePath), server.path, "${playUrl.trimEnd('/')}/$sourcePath", System.currentTimeMillis(),
+        )
+        if (source.cookies.isNotEmpty() || source.requirements.isNotEmpty() ||
+            source.redirectPolicy != PlaybackRedirectPolicy.SYSTEM) {
+            throw CatalogException(CatalogFailure(CatalogFailureKind.UNSUPPORTED, 0,
+                "AniDB App source requires unsupported request controls"))
+        }
         val stream = StreamItem(
-            url = hls,
-            type = "hls",
+            url = source.url,
+            type = if (source.format == PlaybackFormat.HLS) "hls" else "mp4",
             quality = if (server.audio == "dub") "AniDB App English" else "AniDB App Japanese",
             audio = audio,
             // The CDN serves the master, variants and segments to a bare request.
@@ -144,6 +157,7 @@ internal class AniDbAppProvider(
             isActive = true,
             width = null,
             height = null,
+            headers = source.headers,
         )
         return SourcesResult(listOf(stream), emptyList(), null, null)
     }
@@ -420,8 +434,9 @@ internal object AniDbAppParser {
             ?: servers.firstOrNull { it.path.endsWith(if (audio == "dub") "/eng" else "/jpn") }
 
     /** `{"link":"https://…/master.m3u8"}`. */
-    fun link(root: JsonElement): String? =
-        (root as? JsonObject)?.let { string(it, "link") }?.takeIf { it.startsWith("http") }
+    fun link(root: JsonElement): String? = try {
+        AniDbSourceParser.parse(root.toString(), "parser", "https://play.anidb.app/api/", System.currentTimeMillis()).url
+    } catch (_: CatalogException) { null }
 
     /** `{"posts":[{"id":1000001199,…}]}` — ids only; everything else needs [cataloguePost]. */
     fun catalogueSearch(root: JsonElement): List<Int> =

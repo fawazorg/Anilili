@@ -5,21 +5,34 @@ import SharedCore
 /// Only HTTP belongs here. GraphQL requests, decoding and domain mapping live in SharedCore.
 final class URLSessionCatalogTransport: NSObject, CatalogCallbackTransport {
     private let session: URLSession
-    init(session: URLSession = URLSession(configuration: .ephemeral)) { self.session = session; super.init() }
+    private let allowLoopback: Bool
+    init(session: URLSession = URLSession(configuration: .ephemeral), allowLoopback: Bool = false) {
+        self.session = session
+        self.allowLoopback = allowLoopback
+        super.init()
+    }
     deinit { session.invalidateAndCancel() }
 
     func post(request: CatalogHttpRequest, completion: CatalogHttpCompletion) -> CatalogCancellation {
-        guard let url = URL(string: request.url), url.scheme == "https" else {
-            completion.complete(response: nil, error: "Catalog requires an HTTPS endpoint.")
+        guard let url = URL(string: request.url), Self.allowed(url, allowLoopback: allowLoopback) else {
+            completion.complete(response: nil, error: "An HTTPS endpoint is required; only explicit fixture transports allow loopback HTTP.")
+            return HTTPTaskCancellation(task: nil)
+        }
+        guard ["GET", "POST"].contains(request.method),
+              MediaSourcePolicy.shared.validHeaders(headers: request.headers) else {
+            completion.complete(response: nil, error: "Unsupported HTTP method or invalid request headers.")
             return HTTPTaskCancellation(task: nil)
         }
         var message = URLRequest(url: url)
-        message.httpMethod = "POST"
-        message.httpBody = Data(request.body.utf8)
+        message.httpMethod = request.method
+        if request.method == "POST" { message.httpBody = Data(request.body.utf8) }
         message.setValue("application/json", forHTTPHeaderField: "Content-Type")
         message.setValue("application/json", forHTTPHeaderField: "Accept")
         message.setValue("Anilili-iOS-Prototype/0.1", forHTTPHeaderField: "User-Agent")
         message.setValue("anilili://ios-playback-poc", forHTTPHeaderField: "Referer")
+        for (name, value) in request.headers { message.setValue(value, forHTTPHeaderField: name) }
+        // Credentials belong to this request, never a shared or global cookie jar.
+        message.httpShouldHandleCookies = false
         message.timeoutInterval = 30
         let task = session.dataTask(with: message) { data, response, error in
             if let error = error as NSError? {
@@ -28,19 +41,56 @@ final class URLSessionCatalogTransport: NSObject, CatalogCallbackTransport {
             }
             guard let http = response as? HTTPURLResponse,
                   let data, let body = String(data: data, encoding: .utf8) else {
-                completion.complete(response: nil, error: "The catalog returned an invalid HTTP response.")
+                completion.complete(response: nil, error: "The provider returned an invalid HTTP response.")
                 return
             }
-            completion.complete(response: CatalogHttpResponse(status: Int32(http.statusCode), body: body), error: nil)
+            let headers = http.allHeaderFields.reduce(into: [String: String]()) { result, pair in
+                if let name = pair.key as? String { result[name] = String(describing: pair.value) }
+            }
+            completion.complete(response: CatalogHttpResponse(status: Int32(http.statusCode), body: body, headers: headers, finalUrl: http.url?.absoluteString), error: nil)
         }
+        let redirectDelegate = ProviderRedirectDelegate(initialURL: url, allowLoopback: allowLoopback)
+        task.delegate = redirectDelegate
         task.resume()
-        return HTTPTaskCancellation(task: task)
+        return HTTPTaskCancellation(task: task, redirectDelegate: redirectDelegate)
+    }
+
+    fileprivate static func allowed(_ url: URL, allowLoopback: Bool) -> Bool {
+        guard url.user == nil, url.password == nil, url.host != nil else { return false }
+        return url.scheme == "https" || (allowLoopback && url.scheme == "http" && ["127.0.0.1", "localhost", "::1"].contains(url.host!))
+    }
+}
+
+/// Resolving metadata may redirect, but HTTPS cannot downgrade and credentials never cross origins.
+private final class ProviderRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    private let initialURL: URL
+    private let allowLoopback: Bool
+    private var count = 0
+    init(initialURL: URL, allowLoopback: Bool) { self.initialURL = initialURL; self.allowLoopback = allowLoopback; super.init() }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        count += 1
+        guard count <= 5, let next = request.url,
+              URLSessionCatalogTransport.allowed(next, allowLoopback: allowLoopback),
+              !(initialURL.scheme == "https" && next.scheme != "https") else { completionHandler(nil); return }
+        var forwarded = request
+        let previous = response.url ?? initialURL
+        if previous.scheme != next.scheme || previous.host != next.host || previous.port != next.port {
+            forwarded.allHTTPHeaderFields = forwarded.allHTTPHeaderFields?.filter {
+                ["accept", "user-agent"].contains($0.key.lowercased())
+            }
+        }
+        forwarded.httpShouldHandleCookies = false
+        completionHandler(forwarded)
     }
 }
 
 private final class HTTPTaskCancellation: NSObject, CatalogCancellation {
     private let task: URLSessionDataTask?
-    init(task: URLSessionDataTask?) { self.task = task; super.init() }
+    private let redirectDelegate: ProviderRedirectDelegate?
+    init(task: URLSessionDataTask?, redirectDelegate: ProviderRedirectDelegate? = nil) {
+        self.task = task; self.redirectDelegate = redirectDelegate; super.init()
+    }
     func cancel() { task?.cancel() }
 }
 

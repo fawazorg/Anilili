@@ -23,7 +23,23 @@ data class PlaybackSource(
     val url: String,
     val format: PlaybackFormat,
     val headers: Map<String, String> = emptyMap(),
-)
+    val cookies: List<PlaybackCookie> = emptyList(),
+    val redirectPolicy: PlaybackRedirectPolicy = PlaybackRedirectPolicy.SYSTEM,
+    val expiresAtMs: Long? = null,
+    val audioTracks: List<PlaybackTrack> = emptyList(),
+    val subtitleTracks: List<PlaybackTrack> = emptyList(),
+    val requirements: List<String> = emptyList(),
+) {
+    constructor(episodeId: String, url: String, format: PlaybackFormat, headers: Map<String, String>) :
+        this(episodeId, url, format, headers, emptyList(), PlaybackRedirectPolicy.SYSTEM, null, emptyList(), emptyList(), emptyList())
+}
+@Serializable
+data class PlaybackCookie(val name: String, val value: String, val domain: String,
+    val path: String = "/", val secure: Boolean = true, val expiresAtMs: Long? = null)
+@Serializable
+enum class PlaybackRedirectPolicy { SYSTEM, SAME_ORIGIN, DENY }
+@Serializable
+data class PlaybackTrack(val id: String, val label: String, val language: String? = null, val url: String? = null)
 @Serializable
 private data class EpisodeListResponse(val episodes: List<Episode>)
 @Serializable
@@ -49,7 +65,7 @@ class EpisodeRepository(private val transport: CatalogHttpTransport, private val
         val body = post("resolve", animeId, episodeId)
         val source = decode { json.decodeFromString(EpisodeSourceResponse.serializer(), body) }.source
             ?: throw CatalogException(CatalogFailure(CatalogFailureKind.HTTP, 404, "No playable source for this episode"))
-        if (source.episodeId != episodeId || !validSourceUrl(source.url) ||
+        if (source.episodeId != episodeId || !com.anilili.provider.MediaSourcePolicy.validUrl(source.url, allowFixtures = true) ||
             source.headers.any { (name, value) -> name.isBlank() || name.any { it <= ' ' || it == ':' || it >= '\u007f' } || value.any { it < ' ' || it == '\u007f' } }) {
             throw invalid("Invalid playback source")
         }
@@ -69,20 +85,6 @@ class EpisodeRepository(private val transport: CatalogHttpTransport, private val
             throw CatalogException(CatalogFailure(CatalogFailureKind.HTTP, response.status, "Episode provider HTTP ${response.status}"))
         }
         return response.body
-    }
-
-    private fun validSourceUrl(value: String): Boolean {
-        if (value.any { it <= ' ' || it == '\\' }) return false
-        // Bundled fixtures are explicit demo assets, never inferred from a live AniList title.
-        if (value == "fixture://progressive.mp4" || value == "fixture://hls/master.m3u8" || value == "fixture://invalid.mp4") return true
-        val match = Regex("^https?://([^/?#]+)(?:[/?#].*)?$").matchEntire(value) ?: return false
-        val authority = match.groupValues[1]
-        // No credentials, malformed port, or empty host may cross the provider boundary.
-        val parts = Regex("^(\\[[0-9A-Fa-f:]+\\]|[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)(?::([0-9]{1,5}))?$").matchEntire(authority)
-            ?: return false
-        val port = parts.groupValues[2]
-        return (port.isEmpty() || port.toInt() in 1..65535) &&
-            (parts.groupValues[1].startsWith("[") || parts.groupValues[1].split('.').all { it.isNotEmpty() && !it.startsWith("-") && !it.endsWith("-") })
     }
 
     private inline fun <T> decode(block: () -> T): T = try { block() }

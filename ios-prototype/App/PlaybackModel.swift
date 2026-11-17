@@ -1,6 +1,7 @@
 import AVFoundation
 import Combine
 import Foundation
+import SharedCore
 
 @MainActor
 final class PlaybackModel: ObservableObject {
@@ -20,7 +21,49 @@ final class PlaybackModel: ObservableObject {
     private var generation = UUID()
     private var pendingResumeSeconds: Double?
     private var wantsToPlay = false
+    private var sourceExpiresAtMs: Int64?
     var onProgressSample: ((Double, Double, Bool) -> Void)?
+
+    /// Uses documented AVFoundation options only; unsupported provider requirements fail before fetching.
+    @discardableResult
+    func load(source: PlaybackSource, nowMs: Int64 = Int64(Date().timeIntervalSince1970 * 1_000), resumeSeconds: Double = 0) -> Bool {
+        stop()
+        guard let url = URL(string: source.url), ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
+              url.host != nil, url.user == nil, url.password == nil else {
+            fail("The provider returned an invalid media URL."); return false
+        }
+        if let reason = MediaSourcePolicy.shared.appleUnsupportedReason(source: source, nowMs: nowMs) {
+            fail(reason); return false
+        }
+        var cookies: [HTTPCookie] = []
+        for value in source.cookies {
+            if let expires = value.expiresAtMs, expires.int64Value <= nowMs {
+                fail("A required playback cookie expired. Resolve the source again."); return false
+            }
+            var properties: [HTTPCookiePropertyKey: Any] = [
+                .name: value.name, .value: value.value, .domain: value.domain, .path: value.path
+            ]
+            if value.secure { properties[.secure] = "TRUE" }
+            if let expires = value.expiresAtMs { properties[.expires] = Date(timeIntervalSince1970: Double(expires.int64Value) / 1_000) }
+            guard let cookie = HTTPCookie(properties: properties), Self.cookie(cookie, appliesTo: url) else {
+                fail("A required cookie does not apply to this media URL; cross-host cookie requirements are unsupported."); return false
+            }
+            cookies.append(cookie)
+        }
+        load(url, headers: source.headers, cookies: cookies, resumeSeconds: resumeSeconds)
+        if errorMessage == nil {
+            sourceExpiresAtMs = ([source.expiresAtMs?.int64Value] + source.cookies.map { $0.expiresAtMs?.int64Value }).compactMap { $0 }.min()
+        }
+        return errorMessage == nil
+    }
+
+    private static func cookie(_ cookie: HTTPCookie, appliesTo url: URL) -> Bool {
+        guard let host = url.host?.lowercased(), cookie.expiresDate.map({ $0 > Date() }) ?? true else { return false }
+        let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
+        let path = url.path.isEmpty ? "/" : url.path
+        let pathMatches = path == cookie.path || (path.hasPrefix(cookie.path) && (cookie.path.hasSuffix("/") || path.dropFirst(cookie.path.count).hasPrefix("/")))
+        return (host == domain || host.hasSuffix("." + domain)) && pathMatches && (!cookie.isSecure || url.scheme == "https")
+    }
 
     // AVFoundation has a public cookie option, but no public arbitrary HTTP header API.
     // Refuse unsupported headers rather than silently dropping provider requirements.
@@ -38,11 +81,7 @@ final class PlaybackModel: ObservableObject {
         state = "Loading"
         pendingResumeSeconds = resumeSeconds.isFinite && resumeSeconds > 0 ? resumeSeconds : nil
         let token = generation
-        let scopedCookies = cookies.filter { cookie in
-            guard let host = url.host?.lowercased() else { return false }
-            let domain = cookie.domain.lowercased().trimmingCharacters(in: CharacterSet(charactersIn: "."))
-            return (host == domain || host.hasSuffix("." + domain)) && (!cookie.isSecure || url.scheme == "https")
-        }
+        let scopedCookies = cookies.filter { Self.cookie($0, appliesTo: url) }
         var options: [String: Any] = [AVURLAssetHTTPCookiesKey: scopedCookies]
         if let agent = headers.first(where: { $0.key.caseInsensitiveCompare("User-Agent") == .orderedSame })?.value {
             options[AVURLAssetHTTPUserAgentKey] = agent
@@ -69,7 +108,7 @@ final class PlaybackModel: ObservableObject {
                                     self.pendingResumeSeconds = nil
                                     self.seconds = target
                                     self.appliedResumeSeconds = target
-                                    if self.wantsToPlay { self.player.play() }
+                                    if self.wantsToPlay { self.play() }
                                     else { self.state = "Paused" }
                                 }
                             }
@@ -131,6 +170,10 @@ final class PlaybackModel: ObservableObject {
     }
 
     func play() {
+        if let expiry = sourceExpiresAtMs, expiry <= Int64(Date().timeIntervalSince1970 * 1_000) {
+            fail("The playback source expired. Resolve it again before playing.")
+            return
+        }
         wantsToPlay = true
         if player.currentItem != nil && pendingResumeSeconds == nil { player.play() }
     }
@@ -159,6 +202,7 @@ final class PlaybackModel: ObservableObject {
     func stop() {
         emitProgress(immediate: true)
         wantsToPlay = false
+        sourceExpiresAtMs = nil
         pendingResumeSeconds = nil
         generation = UUID()
         loading?.cancel()
