@@ -9,6 +9,8 @@ final class WatchHistoryUITests: XCTestCase {
     func testPersistedContinueWatchingResumesAfterApplicationRestart() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
+        // The isolated history-test launch uses a 120-second original fixture, leaving time
+        // for accessibility snapshots after resume; progression assertions remain mandatory.
         app.launchArguments = ["--watch-history-ui-test", "--reset-watch-history-ui-test", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         defer { app.terminate() }

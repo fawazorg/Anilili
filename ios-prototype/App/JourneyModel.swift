@@ -64,7 +64,11 @@ final class JourneyModel: ObservableObject {
         // Only known original fixtures are admitted; provider URLs cannot name arbitrary files.
         switch address {
         case "fixture://progressive.mp4":
-            return Bundle.main.url(forResource: "progressive", withExtension: "mp4", subdirectory: "Fixtures")
+            // Restart UI automation can outlast the twelve-second demo before sampling the clock.
+            // Only its explicitly isolated launch uses the longer original-media variant.
+            let resource = ProcessInfo.processInfo.arguments.contains("--watch-history-ui-test")
+                ? "history-resume" : "progressive"
+            return Bundle.main.url(forResource: resource, withExtension: "mp4", subdirectory: "Fixtures")
         case "fixture://invalid.mp4":
             return Bundle.main.url(forResource: "invalid", withExtension: "mp4", subdirectory: "Fixtures")
         case "fixture://hls/master.m3u8":
