@@ -1,0 +1,224 @@
+// !$*UTF8*$!
+{
+"archiveVersion" = "1";
+"classes" = {
+};
+"objectVersion" = "56";
+"objects" = {
+"000000000000000000000001" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "App/PlaybackModel.swift";
+"sourceTree" = "<group>";
+};
+"000000000000000000000002" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "000000000000000000000001";
+};
+"000000000000000000000003" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "App/PlaybackPOCApp.swift";
+"sourceTree" = "<group>";
+};
+"000000000000000000000004" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "000000000000000000000003";
+};
+"000000000000000000000005" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "Tests/PlaybackTests.swift";
+"sourceTree" = "<group>";
+};
+"000000000000000000000006" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "000000000000000000000005";
+};
+"000000000000000000000007" = {
+"isa" = "PBXFileReference";
+"explicitFileType" = "wrapper.application";
+"path" = "PlaybackPOC.app";
+"sourceTree" = "BUILT_PRODUCTS_DIR";
+};
+"000000000000000000000008" = {
+"isa" = "PBXFileReference";
+"explicitFileType" = "wrapper.cfbundle";
+"path" = "PlaybackPOCTests.xctest";
+"sourceTree" = "BUILT_PRODUCTS_DIR";
+};
+"000000000000000000000009" = {
+"isa" = "PBXGroup";
+"children" = ("000000000000000000000001","000000000000000000000003","000000000000000000000005","00000000000000000000000A");
+"sourceTree" = "<group>";
+};
+"00000000000000000000000A" = {
+"isa" = "PBXGroup";
+"children" = ("000000000000000000000007","000000000000000000000008");
+"name" = "Products";
+"sourceTree" = "<group>";
+};
+"00000000000000000000000B" = {
+"isa" = "PBXSourcesBuildPhase";
+"buildActionMask" = "2147483647";
+"files" = ("000000000000000000000002","000000000000000000000004");
+"runOnlyForDeploymentPostprocessing" = "0";
+};
+"00000000000000000000000C" = {
+"isa" = "PBXSourcesBuildPhase";
+"buildActionMask" = "2147483647";
+"files" = ("000000000000000000000006");
+"runOnlyForDeploymentPostprocessing" = "0";
+};
+"00000000000000000000000D" = {
+"isa" = "PBXTargetDependency";
+"target" = "00000000000000000000000F";
+"targetProxy" = "00000000000000000000000E";
+};
+"00000000000000000000000E" = {
+"isa" = "PBXContainerItemProxy";
+"containerPortal" = "00000000000000000000001A";
+"proxyType" = "1";
+"remoteGlobalIDString" = "00000000000000000000000F";
+"remoteInfo" = "PlaybackPOC";
+};
+"00000000000000000000000F" = {
+"isa" = "PBXNativeTarget";
+"buildConfigurationList" = "000000000000000000000016";
+"buildPhases" = ("00000000000000000000000B");
+"buildRules" = ();
+"dependencies" = ();
+"name" = "PlaybackPOC";
+"productName" = "PlaybackPOC";
+"productReference" = "000000000000000000000007";
+"productType" = "com.apple.product-type.application";
+};
+"000000000000000000000010" = {
+"isa" = "PBXNativeTarget";
+"buildConfigurationList" = "000000000000000000000019";
+"buildPhases" = ("00000000000000000000000C");
+"buildRules" = ();
+"dependencies" = ("00000000000000000000000D");
+"name" = "PlaybackPOCTests";
+"productName" = "PlaybackPOCTests";
+"productReference" = "000000000000000000000008";
+"productType" = "com.apple.product-type.bundle.unit-test";
+};
+"000000000000000000000011" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"SDKROOT" = "iphoneos";
+"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
+"SWIFT_VERSION" = "5.0";
+"CLANG_ENABLE_MODULES" = "YES";
+"CODE_SIGNING_ALLOWED" = "NO";
+"TARGETED_DEVICE_FAMILY" = "1,2";
+"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+"ENABLE_TESTABILITY" = "YES";
+"DEBUG_INFORMATION_FORMAT" = "dwarf";
+};
+"name" = "Debug";
+};
+"000000000000000000000012" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"SDKROOT" = "iphoneos";
+"IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
+"SWIFT_VERSION" = "5.0";
+"CLANG_ENABLE_MODULES" = "YES";
+"CODE_SIGNING_ALLOWED" = "NO";
+"TARGETED_DEVICE_FAMILY" = "1,2";
+};
+"name" = "Release";
+};
+"000000000000000000000013" = {
+"isa" = "XCConfigurationList";
+"buildConfigurations" = ("000000000000000000000011","000000000000000000000012");
+"defaultConfigurationIsVisible" = "0";
+"defaultConfigurationName" = "Release";
+};
+"000000000000000000000014" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"GENERATE_INFOPLIST_FILE" = "YES";
+"INFOPLIST_FILE" = "App/Info.plist";
+"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
+"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
+"SWIFT_EMIT_LOC_STRINGS" = "YES";
+"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+"ENABLE_TESTABILITY" = "YES";
+"DEBUG_INFORMATION_FORMAT" = "dwarf";
+};
+"name" = "Debug";
+};
+"000000000000000000000015" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"GENERATE_INFOPLIST_FILE" = "YES";
+"INFOPLIST_FILE" = "App/Info.plist";
+"INFOPLIST_KEY_UILaunchScreen_Generation" = "YES";
+"INFOPLIST_KEY_UIApplicationSceneManifest_Generation" = "YES";
+"SWIFT_EMIT_LOC_STRINGS" = "YES";
+};
+"name" = "Release";
+};
+"000000000000000000000016" = {
+"isa" = "XCConfigurationList";
+"buildConfigurations" = ("000000000000000000000014","000000000000000000000015");
+"defaultConfigurationIsVisible" = "0";
+"defaultConfigurationName" = "Release";
+};
+"000000000000000000000017" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc.tests";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"GENERATE_INFOPLIST_FILE" = "YES";
+"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/PlaybackPOC.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PlaybackPOC";
+"BUNDLE_LOADER" = "$(TEST_HOST)";
+"SWIFT_OPTIMIZATION_LEVEL" = "-Onone";
+"ENABLE_TESTABILITY" = "YES";
+"DEBUG_INFORMATION_FORMAT" = "dwarf";
+};
+"name" = "Debug";
+};
+"000000000000000000000018" = {
+"isa" = "XCBuildConfiguration";
+"buildSettings" = {
+"PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc.tests";
+"PRODUCT_NAME" = "$(TARGET_NAME)";
+"GENERATE_INFOPLIST_FILE" = "YES";
+"TEST_HOST" = "$(BUILT_PRODUCTS_DIR)/PlaybackPOC.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/PlaybackPOC";
+"BUNDLE_LOADER" = "$(TEST_HOST)";
+};
+"name" = "Release";
+};
+"000000000000000000000019" = {
+"isa" = "XCConfigurationList";
+"buildConfigurations" = ("000000000000000000000017","000000000000000000000018");
+"defaultConfigurationIsVisible" = "0";
+"defaultConfigurationName" = "Release";
+};
+"00000000000000000000001A" = {
+"isa" = "PBXProject";
+"attributes" = {
+"LastUpgradeCheck" = "1640";
+};
+"buildConfigurationList" = "000000000000000000000013";
+"compatibilityVersion" = "Xcode 14.0";
+"developmentRegion" = "en";
+"hasScannedForEncodings" = "0";
+"knownRegions" = ("en","Base");
+"mainGroup" = "000000000000000000000009";
+"productRefGroup" = "00000000000000000000000A";
+"projectDirPath" = "";
+"projectRoot" = "";
+"targets" = ("00000000000000000000000F","000000000000000000000010");
+};
+};
+"rootObject" = "00000000000000000000001A";
+}
