@@ -71,13 +71,13 @@ final class CatalogModel: ObservableObject {
         self.client = client
     }
 
-    func search() {
+    func search(allowEmpty: Bool = false) {
         cancel()
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
         errorMessage = nil
         items = []
-        hasSearched = !term.isEmpty
-        guard !term.isEmpty else { return }
+        hasSearched = allowEmpty || !term.isEmpty
+        guard allowEmpty || !term.isEmpty else { return }
         isLoading = true
         let token = generation
         request = client.search(query: term, page: 1, perPage: 20, hideAdult: true, completion: PageCompletion { [weak self] page, failure in

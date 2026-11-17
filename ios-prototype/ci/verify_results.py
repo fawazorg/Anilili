@@ -6,7 +6,12 @@ import sys
 
 def verify(summary, tests_directory):
     sources = sorted(tests_directory.glob("*Tests.swift"))
-    required = sum(len(re.findall(r"\bfunc\s+test\w+\s*\(", source.read_text())) for source in sources)
+    sources += sorted((tests_directory.parent / "UITests").glob("*Tests.swift"))
+    counts = {str(source.relative_to(tests_directory.parent)): len(re.findall(r"\bfunc\s+test\w+\s*\(", source.read_text())) for source in sources}
+    required_suites = {"Tests/PlaybackTests.swift", "Tests/CatalogTests.swift", "Tests/JourneyTests.swift", "UITests/JourneyUITests.swift"}
+    if not required_suites.issubset(counts) or any(counts[name] == 0 for name in required_suites):
+        raise ValueError("Required playback, catalog, journey, and UI journey suites must contain tests")
+    required = sum(counts.values())
     passed = summary.get("passedTests", 0)
     failed = summary.get("failedTests", 0)
     skipped = summary.get("skippedTests", 0)
@@ -22,4 +27,4 @@ if __name__ == "__main__":
         passed = verify(summary, Path(__file__).resolve().parents[1] / "Tests")
     except ValueError as error:
         raise SystemExit(str(error))
-    print(f"Verified {passed} executed simulator tests across playback and catalog suites.")
+    print(f"Verified {passed} executed simulator tests across playback, catalog, integration journey, and UI journey suites.")

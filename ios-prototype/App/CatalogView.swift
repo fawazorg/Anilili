@@ -92,6 +92,7 @@ struct CatalogDetailsView: View {
                         if let episodes = media.episodes { Text("Episodes: \(episodes.intValue)") }
                         if !media.genres.isEmpty { Text(media.genres.joined(separator: ", ")) }
                         if let description = media.synopsis { Text(description) }
+                        Text("Episode playback for live providers is not available in this prototype. Use the original Demo journey to test the connected flow.").font(.footnote).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding()
                 }.accessibilityIdentifier("catalog.details")
             } else {

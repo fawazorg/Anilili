@@ -1,4 +1,4 @@
-name: iOS Playback and Catalog
+name: iOS End-to-End Experience
 
 on:
   workflow_dispatch:
@@ -67,7 +67,7 @@ jobs:
           with open(os.environ['GITHUB_ENV'], 'a') as f:
               f.write(f"IOS_SIMULATOR_UDID={device['udid']}\n")
           PY
-      - name: Link shared catalog and playback framework
+      - name: Link shared catalog, episodes, and playback framework
         run: |
           set -euo pipefail
           ./gradlew :shared-core:tasks --all --console=plain
@@ -80,7 +80,7 @@ jobs:
           state=$(xcrun simctl list devices available --json | python3 -c 'import json,os,sys; print(next(d["state"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["udid"] == os.environ["IOS_SIMULATOR_UDID"]))')
           if [ "$state" != Booted ]; then xcrun simctl boot "$IOS_SIMULATOR_UDID"; fi
           xcrun simctl bootstatus "$IOS_SIMULATOR_UDID" -b
-      - name: Build catalog app and verify playback and catalog tests
+      - name: Build app and verify catalog-to-playback journey
         shell: bash
         run: |
           set -euo pipefail
@@ -102,7 +102,7 @@ jobs:
           xcrun xcresulttool get test-results summary --path ios-prototype/Results/Playback.xcresult \
             > ios-prototype/Results/test-summary.json
           python3 ios-prototype/ci/verify_results.py ios-prototype/Results/test-summary.json
-      - name: Preserve playback and catalog evidence
+      - name: Preserve end-to-end playback and catalog evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
