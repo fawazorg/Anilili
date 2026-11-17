@@ -1,0 +1,106 @@
+name: iOS Playback Proof of Concept
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'ios-prototype/**'
+      - 'shared-core/**'
+      - 'gradle/**'
+      - '*.gradle.kts'
+      - 'gradle.properties'
+      - '.github/workflows/ios-playback-poc.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-playback-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  playback:
+    runs-on: macos-15-intel
+    timeout-minutes: 35
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.1'
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Inspect Xcode, project, and compatible simulators
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p ios-prototype/Results
+          test "$(uname -m)" = x86_64
+          ls -d /Applications/Xcode*.app
+          xcodebuild -version
+          xcrun simctl list runtimes
+          xcrun simctl list devices available
+          xcodebuild -list -project ios-prototype/PlaybackPOC.xcodeproj
+          xcodebuild -showdestinations -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC
+          xcrun simctl list devices available --json > ios-prototype/Results/simulators.json
+          python3 - <<'PY'
+          import json, os
+          with open('ios-prototype/Results/simulators.json') as f:
+              devices = json.load(f)['devices']
+          candidates = [(runtime, d) for runtime, group in devices.items()
+                        if '.iOS-18-' in runtime for d in group
+                        if d.get('isAvailable') and d['name'].startswith('iPhone')]
+          if not candidates:
+              raise SystemExit('Required iOS 18 simulator for Xcode 16.4 is missing.')
+          runtime, device = sorted(candidates, key=lambda pair: (pair[0], pair[1]['name']))[-1]
+          print(f"Selected {runtime}: {device['name']} ({device['udid']})")
+          with open(os.environ['GITHUB_ENV'], 'a') as f:
+              f.write(f"IOS_SIMULATOR_UDID={device['udid']}\n")
+          PY
+      - name: Link preserved KMP simulator framework
+        run: |
+          set -euo pipefail
+          ./gradlew :shared-core:tasks --all --console=plain
+          ./gradlew :shared-core:linkDebugFrameworkIosX64 --stacktrace
+      - name: Test local fixture server and boot simulator
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -m unittest discover -s ios-prototype/ci -p 'test_*.py'
+          state=$(xcrun simctl list devices available --json | python3 -c 'import json,os,sys; print(next(d["state"] for ds in json.load(sys.stdin)["devices"].values() for d in ds if d["udid"] == os.environ["IOS_SIMULATOR_UDID"]))')
+          if [ "$state" != Booted ]; then xcrun simctl boot "$IOS_SIMULATOR_UDID"; fi
+          xcrun simctl bootstatus "$IOS_SIMULATOR_UDID" -b
+      - name: Build app and verify actual simulator playback
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 -u ios-prototype/ci/serve_fixtures.py > ios-prototype/Results/fixture-server.log 2>&1 &
+          fixture_pid=$!
+          trap 'kill "$fixture_pid" 2>/dev/null || true' EXIT
+          for attempt in {1..20}; do
+            kill -0 "$fixture_pid"
+            if curl --fail --silent http://127.0.0.1:8765/hls/master.m3u8 > /dev/null; then break; fi
+            sleep 1
+          done
+          curl --fail --silent http://127.0.0.1:8765/progressive.mp4 > /dev/null
+          xcodebuild test -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+            -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+            -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
+            -resultBundlePath ios-prototype/Results/Playback.xcresult \
+            CODE_SIGNING_ALLOWED=NO 2>&1 | tee ios-prototype/Results/xcodebuild.log
+          kill -0 "$fixture_pid"
+          xcrun xcresulttool get test-results summary --path ios-prototype/Results/Playback.xcresult \
+            > ios-prototype/Results/test-summary.json
+          python3 ios-prototype/ci/verify_results.py ios-prototype/Results/test-summary.json
+      - name: Preserve playback evidence and failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-playback-results
+          path: ios-prototype/Results/
+          retention-days: 7
