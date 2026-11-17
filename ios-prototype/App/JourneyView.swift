@@ -125,7 +125,7 @@ private struct JourneyDetailsScreen: View {
                 }
             } header: { Text("Episodes") } footer: {
                 Text("MP4 is bundled for offline playback. HLS requires the local fixture server. The missing-source and invalid-media episodes demonstrate error handling.")
-            }.accessibilityIdentifier("journey.episodes")
+            }
         }
         .navigationTitle("Anime details")
         .navigationBarTitleDisplayMode(.inline)
