@@ -573,8 +573,9 @@ class DetailViewModel : ViewModel() {
         airingWatch?.cancel()
         val season = (_state.value as? UiState.Success)?.data?.selectedSeason ?: return
         if (season.id != seasonId) return
-        val number = season.nextAiringEpisode?.episode ?: return
-        val airingAt = season.nextAiringEpisode.airingAt ?: return
+        val nextAiring = season.nextAiringEpisode ?: return
+        val number = nextAiring.episode ?: return
+        val airingAt = nextAiring.airingAt ?: return
         airingWatch = viewModelScope.launch {
             delay(((airingAt - System.currentTimeMillis() / 1000) * 1000).coerceAtLeast(0))
             updateSeason(seasonId) { data, current ->
@@ -864,8 +865,9 @@ internal fun anilistEpisodeCatalog(info: Media): List<EpisodeItem> {
     // An announced season often already carries its planned count, and none of it has aired.
     if (info.isUpcoming()) return emptyList()
     val releasedBeforeNext = info.nextAiringEpisode?.episode?.minus(1)?.coerceAtLeast(0)
+    val totalEpisodes = info.episodes
     val count = when {
-        releasedBeforeNext != null && info.episodes != null -> minOf(releasedBeforeNext, info.episodes)
+        releasedBeforeNext != null && totalEpisodes != null -> minOf(releasedBeforeNext, totalEpisodes)
         releasedBeforeNext != null -> releasedBeforeNext
         else -> info.episodes ?: 0
     }.coerceAtLeast(0)

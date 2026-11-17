@@ -5,6 +5,37 @@
 };
 "objectVersion" = "56";
 "objects" = {
+"00000000000000000000001B" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "App/CatalogModel.swift";
+"sourceTree" = "<group>";
+};
+"00000000000000000000001C" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "00000000000000000000001B";
+};
+"00000000000000000000001D" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "App/CatalogView.swift";
+"sourceTree" = "<group>";
+};
+"00000000000000000000001E" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "00000000000000000000001D";
+};
+"00000000000000000000001F" = {
+"isa" = "PBXFileReference";
+"lastKnownFileType" = "sourcecode.swift";
+"path" = "Tests/CatalogTests.swift";
+"sourceTree" = "<group>";
+};
+"000000000000000000000020" = {
+"isa" = "PBXBuildFile";
+"fileRef" = "00000000000000000000001F";
+};
+
 "000000000000000000000001" = {
 "isa" = "PBXFileReference";
 "lastKnownFileType" = "sourcecode.swift";
@@ -49,7 +80,7 @@
 };
 "000000000000000000000009" = {
 "isa" = "PBXGroup";
-"children" = ("000000000000000000000001","000000000000000000000003","000000000000000000000005","00000000000000000000000A");
+"children" = ("000000000000000000000001","000000000000000000000003","000000000000000000000005","00000000000000000000001B","00000000000000000000001D","00000000000000000000001F","00000000000000000000000A");
 "sourceTree" = "<group>";
 };
 "00000000000000000000000A" = {
@@ -61,13 +92,13 @@
 "00000000000000000000000B" = {
 "isa" = "PBXSourcesBuildPhase";
 "buildActionMask" = "2147483647";
-"files" = ("000000000000000000000002","000000000000000000000004");
+"files" = ("000000000000000000000002","000000000000000000000004","00000000000000000000001C","00000000000000000000001E");
 "runOnlyForDeploymentPostprocessing" = "0";
 };
 "00000000000000000000000C" = {
 "isa" = "PBXSourcesBuildPhase";
 "buildActionMask" = "2147483647";
-"files" = ("000000000000000000000006");
+"files" = ("000000000000000000000006","000000000000000000000020");
 "runOnlyForDeploymentPostprocessing" = "0";
 };
 "00000000000000000000000D" = {
@@ -108,6 +139,9 @@
 "isa" = "XCBuildConfiguration";
 "buildSettings" = {
 "SDKROOT" = "iphoneos";
+"FRAMEWORK_SEARCH_PATHS" = ("$(inherited)","$(SRCROOT)/../shared-core/build/bin/iosX64/debugFramework");
+"SUPPORTED_PLATFORMS" = "iphonesimulator";
+"ARCHS" = "x86_64";
 "IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
 "SWIFT_VERSION" = "5.0";
 "CLANG_ENABLE_MODULES" = "YES";
@@ -123,6 +157,9 @@
 "isa" = "XCBuildConfiguration";
 "buildSettings" = {
 "SDKROOT" = "iphoneos";
+"FRAMEWORK_SEARCH_PATHS" = ("$(inherited)","$(SRCROOT)/../shared-core/build/bin/iosX64/debugFramework");
+"SUPPORTED_PLATFORMS" = "iphonesimulator";
+"ARCHS" = "x86_64";
 "IPHONEOS_DEPLOYMENT_TARGET" = "17.0";
 "SWIFT_VERSION" = "5.0";
 "CLANG_ENABLE_MODULES" = "YES";
@@ -141,6 +178,7 @@
 "isa" = "XCBuildConfiguration";
 "buildSettings" = {
 "PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc";
+"OTHER_LDFLAGS" = ("$(inherited)","-framework","SharedCore");
 "PRODUCT_NAME" = "$(TARGET_NAME)";
 "GENERATE_INFOPLIST_FILE" = "YES";
 "INFOPLIST_FILE" = "App/Info.plist";
@@ -157,6 +195,7 @@
 "isa" = "XCBuildConfiguration";
 "buildSettings" = {
 "PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc";
+"OTHER_LDFLAGS" = ("$(inherited)","-framework","SharedCore");
 "PRODUCT_NAME" = "$(TARGET_NAME)";
 "GENERATE_INFOPLIST_FILE" = "YES";
 "INFOPLIST_FILE" = "App/Info.plist";
