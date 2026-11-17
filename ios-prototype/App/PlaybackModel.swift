@@ -8,6 +8,7 @@ final class PlaybackModel: ObservableObject {
     @Published private(set) var state = "Idle"
     @Published private(set) var errorMessage: String?
     @Published private(set) var seconds = 0.0
+    @Published private(set) var appliedResumeSeconds = 0.0
     @Published private(set) var audioOptions: [AVMediaSelectionOption] = []
     @Published private(set) var subtitleOptions: [AVMediaSelectionOption] = []
     private var audioGroup: AVMediaSelectionGroup?
@@ -17,10 +18,13 @@ final class PlaybackModel: ObservableObject {
     private var notifications: [NSObjectProtocol] = []
     private var loading: Task<Void, Never>?
     private var generation = UUID()
+    private var pendingResumeSeconds: Double?
+    private var wantsToPlay = false
+    var onProgressSample: ((Double, Double, Bool) -> Void)?
 
     // AVFoundation has a public cookie option, but no public arbitrary HTTP header API.
     // Refuse unsupported headers rather than silently dropping provider requirements.
-    func load(_ url: URL, headers: [String: String] = [:], cookies: [HTTPCookie] = []) {
+    func load(_ url: URL, headers: [String: String] = [:], cookies: [HTTPCookie] = [], resumeSeconds: Double = 0) {
         stop()
         guard ["https", "http", "file"].contains(url.scheme?.lowercased() ?? "") else {
             fail("Use an HTTPS, HTTP, or local file URL.")
@@ -32,6 +36,7 @@ final class PlaybackModel: ObservableObject {
         }
         errorMessage = nil
         state = "Loading"
+        pendingResumeSeconds = resumeSeconds.isFinite && resumeSeconds > 0 ? resumeSeconds : nil
         let token = generation
         let scopedCookies = cookies.filter { cookie in
             guard let host = url.host?.lowercased() else { return false }
@@ -53,7 +58,23 @@ final class PlaybackModel: ObservableObject {
                         let error = item.error as NSError?
                         self.fail("Media load failed: \(error?.domain ?? "unknown") code \(error?.code ?? 0).")
                     }
-                    else if item.status == .readyToPlay { self.state = self.player.rate > 0 ? "Playing" : "Ready" }
+                    else if item.status == .readyToPlay {
+                        if let resume = self.pendingResumeSeconds {
+                            let duration = item.duration.seconds
+                            let target = duration.isFinite && duration > 0 ? min(resume, max(0, duration - 0.1)) : resume
+                            self.player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                                Task { @MainActor [weak self] in
+                                    guard let self, self.generation == token else { return }
+                                    guard finished else { self.pendingResumeSeconds = nil; self.fail("The saved playback position could not be restored."); return }
+                                    self.pendingResumeSeconds = nil
+                                    self.seconds = target
+                                    self.appliedResumeSeconds = target
+                                    if self.wantsToPlay { self.player.play() }
+                                    else { self.state = "Paused" }
+                                }
+                            }
+                        } else { self.state = self.player.rate > 0 ? "Playing" : "Ready" }
+                    }
                 }
             },
             player.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
@@ -62,7 +83,9 @@ final class PlaybackModel: ObservableObject {
                     switch player.timeControlStatus {
                     case .playing: self.state = "Playing"
                     case .waitingToPlayAtSpecifiedRate: self.state = "Buffering"
-                    case .paused: self.state = "Paused"
+                    case .paused:
+                        self.state = "Paused"
+                        self.emitProgress(immediate: true)
                     @unknown default: self.state = "Unknown"
                     }
                 }
@@ -73,6 +96,7 @@ final class PlaybackModel: ObservableObject {
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == token else { return }
                     self.state = "Ended"
+                    self.emitProgress(immediate: true)
                 }
             },
             NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] notification in
@@ -88,6 +112,7 @@ final class PlaybackModel: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self, self.generation == token else { return }
                 self.seconds = time.seconds.isFinite ? time.seconds : 0
+                self.emitProgress(immediate: false)
             }
         }
         loading = Task { [weak self] in
@@ -105,8 +130,19 @@ final class PlaybackModel: ObservableObject {
         }
     }
 
-    func play() { if player.currentItem != nil { player.play() } }
-    func pause() { player.pause() }
+    func play() {
+        wantsToPlay = true
+        if player.currentItem != nil && pendingResumeSeconds == nil { player.play() }
+    }
+    func pause() { wantsToPlay = false; player.pause(); emitProgress(immediate: true) }
+
+    private func emitProgress(immediate: Bool) {
+        guard errorMessage == nil, pendingResumeSeconds == nil, let item = player.currentItem, item.status == .readyToPlay else { return }
+        let position = player.currentTime().seconds
+        let duration = item.duration.seconds
+        guard position.isFinite && position >= 0 else { return }
+        onProgressSample?(position, duration.isFinite && duration > 0 ? duration : 0, immediate)
+    }
     func seek(by delta: Double) {
         let now = player.currentTime().seconds
         guard now.isFinite, delta.isFinite else { return }
@@ -121,6 +157,9 @@ final class PlaybackModel: ObservableObject {
         if let subtitleGroup { player.currentItem?.select(option, in: subtitleGroup) }
     }
     func stop() {
+        emitProgress(immediate: true)
+        wantsToPlay = false
+        pendingResumeSeconds = nil
         generation = UUID()
         loading?.cancel()
         loading = nil
@@ -138,6 +177,7 @@ final class PlaybackModel: ObservableObject {
         audioOptions = []
         subtitleOptions = []
         seconds = 0
+        appliedResumeSeconds = 0
         errorMessage = nil
         state = "Idle"
     }

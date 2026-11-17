@@ -2,19 +2,19 @@ import SwiftUI
 import SharedCore
 
 struct JourneyView: View {
-    @StateObject private var model = JourneyModel()
+    @StateObject private var model = JourneyModel(history: WatchHistoryModel.persistent)
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack(path: $model.path) {
-            JourneyCatalogScreen(journey: model, catalog: model.catalogModel)
+            JourneyCatalogScreen(journey: model, catalog: model.catalogModel, history: model.history)
                 .navigationTitle("Demo catalog")
                 .navigationDestination(for: JourneyModel.Route.self) { route in
                     switch route {
                     case .details:
-                        JourneyDetailsScreen(journey: model, details: model.detailsModel)
+                        JourneyDetailsScreen(journey: model, details: model.detailsModel, history: model.history)
                     case .playback:
-                        JourneyPlaybackScreen(journey: model)
+                        JourneyPlaybackScreen(journey: model, history: model.history)
                     }
                 }
         }
@@ -30,6 +30,7 @@ struct JourneyView: View {
 private struct JourneyCatalogScreen: View {
     @ObservedObject var journey: JourneyModel
     @ObservedObject var catalog: CatalogModel
+    @ObservedObject var history: WatchHistoryModel
 
     var body: some View {
         VStack(spacing: 12) {
@@ -41,6 +42,23 @@ private struct JourneyCatalogScreen: View {
                     .onSubmit { journey.loadCatalog() }.accessibilityIdentifier("journey.search")
                 Button("Search") { journey.loadCatalog() }
             }.padding(.horizontal)
+            if let error = history.errorMessage {
+                Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("history.error")
+            }
+            if !history.continuing.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Continue Watching").font(.headline).accessibilityAddTraits(.isHeader)
+                    ForEach(history.continuing, id: \.historyRowID) { record in
+                        Button { journey.continueWatching(record) } label: {
+                            VStack(alignment: .leading) {
+                                Text(record.title).font(.headline)
+                                Text("\(record.episodeTitle) · \(Int(record.positionMs / 1_000)) seconds")
+                                    .font(.caption)
+                            }
+                        }.accessibilityIdentifier("history.continue.\(record.identity.episodeId)")
+                    }
+                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
+            }
             if catalog.isLoading {
                 ProgressView("Loading catalog…").accessibilityIdentifier("journey.catalog.loading")
                 Spacer()
@@ -73,9 +91,13 @@ private struct JourneyCatalogScreen: View {
 private struct JourneyDetailsScreen: View {
     @ObservedObject var journey: JourneyModel
     @ObservedObject var details: CatalogDetailsModel
+    @ObservedObject var history: WatchHistoryModel
 
     var body: some View {
         List {
+            if let error = history.errorMessage {
+                Text(error).foregroundStyle(.red).accessibilityIdentifier("history.error")
+            }
             if details.isLoading {
                 ProgressView("Loading anime details…")
             } else if let error = details.errorMessage {
@@ -105,6 +127,11 @@ private struct JourneyDetailsScreen: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Episode \(episode.number) · \(episode.title)").foregroundStyle(.primary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if let record = history.record(for: episode) {
+                                        Text(record.completed ? "Watched" : (record.positionMs > 0 ? "Resume at \(Int(record.positionMs / 1_000)) seconds" : "Unwatched"))
+                                            .font(.caption).foregroundStyle(.secondary)
+                                            .accessibilityIdentifier("history.status.\(episode.id)")
+                                    }
 
                                 }
                                 Spacer()
@@ -114,6 +141,16 @@ private struct JourneyDetailsScreen: View {
                         }
                         .disabled(journey.resolvingEpisodeID != nil)
                         .accessibilityIdentifier("journey.episode.\(episode.id)")
+                        .contextMenu {
+                            Button(history.record(for: episode)?.completed == true ? "Mark unwatched" : "Mark watched") {
+                                journey.markEpisode(episode, watched: history.record(for: episode)?.completed != true)
+                            }
+                        }
+                        .swipeActions {
+                            Button(history.record(for: episode)?.completed == true ? "Unwatched" : "Watched") {
+                                journey.markEpisode(episode, watched: history.record(for: episode)?.completed != true)
+                            }
+                        }
                     }
                 }
                 if journey.resolvingEpisodeID != nil {
@@ -135,11 +172,23 @@ private struct JourneyDetailsScreen: View {
 
 private struct JourneyPlaybackScreen: View {
     @ObservedObject var journey: JourneyModel
+    @ObservedObject var history: WatchHistoryModel
     var body: some View {
         ScrollView {
             VStack(spacing: 16) {
                 Text(journey.selectedEpisode?.title ?? "Playback").font(.headline)
+                if journey.resumeFromSeconds > 0 {
+                    Text("Resuming at \(journey.resumeFromSeconds, specifier: "%.1f") seconds")
+                        .font(.caption).accessibilityIdentifier("history.resume")
+                }
                 PlayerControls(model: journey.playback)
+                if let error = history.errorMessage {
+                    Text(error).foregroundStyle(.red).accessibilityIdentifier("history.error")
+                }
+                if let episode = journey.selectedEpisode {
+                    Button("Mark watched") { journey.markEpisode(episode, watched: true) }
+                        .accessibilityIdentifier("history.mark-watched")
+                }
                 Button("Back to episodes") { journey.returnToEpisodes() }
                     .accessibilityIdentifier("journey.playback.back")
             }.padding()

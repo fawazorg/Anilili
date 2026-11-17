@@ -1,6 +1,7 @@
 package com.anilili.data.library
 
 import com.anilili.data.model.MediaListEntry
+import com.anilili.history.WatchProgressPolicy
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
@@ -86,12 +87,12 @@ data class HistoryEntry(
  * point at, so that pair is the fallback — upgrading keeps the position the viewer left behind.
  */
 fun HistoryEntry.resumeFor(episodeNumber: Double): EpisodeResume? {
-    if (episodeNumber in watchedEpisodes) return null
-    resumePoints[episodeKey(episodeNumber)]?.let { stored ->
-        return stored.takeIf { it.positionMs > 0 }
-    }
-    if (episodeNumber != this.episodeNumber || positionMs <= 0) return null
-    return EpisodeResume(positionMs, durationMs)
+    val stored = resumePoints[episodeKey(episodeNumber)]
+        ?: if (episodeNumber == this.episodeNumber) EpisodeResume(positionMs, durationMs) else return null
+    val resumePosition = WatchProgressPolicy.resumePositionMs(
+        stored.positionMs, stored.durationMs, completed = episodeNumber in watchedEpisodes,
+    )
+    return stored.takeIf { resumePosition > 0 }
 }
 
 /**
@@ -105,7 +106,7 @@ internal fun HistoryEntry.withEpisodeProgress(
     positionMs: Long,
     durationMs: Long,
 ): HistoryEntry {
-    if (episodeNumber in watchedEpisodes) return this
+    if (!WatchProgressPolicy.validPositionMs(positionMs) || episodeNumber in watchedEpisodes) return this
     val key = episodeKey(episodeNumber)
     val points = if (positionMs <= 0) {
         resumePoints - key
@@ -146,7 +147,7 @@ internal fun HistoryEntry.continueWatchingCaption(): String =
 
 /** Canonical watch-history order used by every screen: the latest playback comes first. */
 internal fun sortHistoryLatestFirst(entries: List<HistoryEntry>): List<HistoryEntry> =
-    entries.sortedByDescending(HistoryEntry::updatedAt)
+    WatchProgressPolicy.latestFirst(entries, HistoryEntry::updatedAt)
 
 /**
  * Continue Watching, newest first, with one row per title.
