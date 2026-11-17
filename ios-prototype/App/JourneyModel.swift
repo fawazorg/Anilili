@@ -12,6 +12,7 @@ final class JourneyModel: ObservableObject {
             if oldValue.contains(where: { if case .playback = $0 { return true }; return false }) &&
                 !path.contains(where: { if case .playback = $0 { return true }; return false }) {
                 playback.stop()
+                history.endSession()
                 selectedEpisode = nil
             }
             if path.isEmpty && !oldValue.isEmpty { cancelDetails() }
@@ -23,7 +24,9 @@ final class JourneyModel: ObservableObject {
     @Published private(set) var episodesError: String?
     @Published private(set) var resolutionError: String?
     @Published private(set) var selectedEpisode: Episode?
+    @Published private(set) var resumeFromSeconds = 0.0
     let playback = PlaybackModel()
+    let history: WatchHistoryModel
     let catalogModel: CatalogModel
     let detailsModel: CatalogDetailsModel
     private let episodeClient: EpisodeClient
@@ -36,14 +39,21 @@ final class JourneyModel: ObservableObject {
     private(set) var hasLoadedCatalog = false
     private var resumeCatalog = false
     private var resumeDetails = false
+    private var continueEpisodeID: String?
 
     init(transport: CatalogCallbackTransport = DemoJourneyTransport(),
-         sourceURL: @escaping (String) -> URL? = JourneyModel.fixtureURL) {
+         sourceURL: @escaping (String) -> URL? = JourneyModel.fixtureURL,
+         history: WatchHistoryModel? = nil) {
         let catalog = CatalogClient(transport: transport, endpoint: "demo://catalog")
         catalogModel = CatalogModel(client: catalog)
         detailsModel = CatalogDetailsModel(client: catalog)
         episodeClient = EpisodeClient(transport: transport, endpoint: "demo://episodes")
         self.sourceURL = sourceURL
+        let history = history ?? WatchHistoryModel()
+        self.history = history
+        playback.onProgressSample = { [weak history] position, duration, immediate in
+            history?.sample(positionSeconds: position, durationSeconds: duration, immediate: immediate)
+        }
     }
 
     nonisolated static func fixtureURL(_ address: String) -> URL? {
@@ -54,7 +64,11 @@ final class JourneyModel: ObservableObject {
         // Only known original fixtures are admitted; provider URLs cannot name arbitrary files.
         switch address {
         case "fixture://progressive.mp4":
-            return Bundle.main.url(forResource: "progressive", withExtension: "mp4", subdirectory: "Fixtures")
+            // Restart UI automation can outlast the twelve-second demo before sampling the clock.
+            // Only its explicitly isolated launch uses the longer original-media variant.
+            let resource = ProcessInfo.processInfo.arguments.contains("--watch-history-ui-test")
+                ? "history-resume" : "progressive"
+            return Bundle.main.url(forResource: resource, withExtension: "mp4", subdirectory: "Fixtures")
         case "fixture://invalid.mp4":
             return Bundle.main.url(forResource: "invalid", withExtension: "mp4", subdirectory: "Fixtures")
         case "fixture://hls/master.m3u8":
@@ -65,12 +79,14 @@ final class JourneyModel: ObservableObject {
 
     func loadCatalog() {
         hasLoadedCatalog = true
+        history.refresh()
         catalogModel.search(allowEmpty: true)
     }
 
     func openAnime(_ id: Int32) {
         cancelDetails()
         playback.stop()
+        history.endSession()
         selectedEpisode = nil
         animeID = id
         episodes = []
@@ -94,6 +110,10 @@ final class JourneyModel: ObservableObject {
                 self.episodesError = failure?.message
                 self.isLoadingEpisodes = false
                 self.episodeRequest = nil
+                if let pending = self.continueEpisodeID {
+                    self.continueEpisodeID = nil
+                    if let episode = self.episodes.first(where: { $0.id == pending }) { self.selectEpisode(episode) }
+                }
             }
         })
     }
@@ -120,11 +140,35 @@ final class JourneyModel: ObservableObject {
                         return
                     }
                     self.selectedEpisode = episode
-                    self.playback.load(url, headers: source.headers)
+                    let resume = self.history.begin(episode: episode,
+                        animeTitle: self.animeTitle(for: episode))
+                    self.resumeFromSeconds = resume
+                    self.playback.load(url, headers: source.headers, resumeSeconds: resume)
                     self.path.append(.playback(episode.id))
                     self.playback.play()
                 }
             })
+    }
+
+    func continueWatching(_ record: WatchProgress) {
+        guard record.identity.providerId == "demo-v1", let id = Int32(record.identity.animeId) else { return }
+        openAnime(id)
+        continueEpisodeID = record.identity.episodeId
+    }
+
+    func markEpisode(_ episode: Episode, watched: Bool) {
+        // Save the current clock before the explicit action invalidates its session generation.
+        let markingCurrentEpisode = selectedEpisode?.id == episode.id
+        if markingCurrentEpisode { playback.pause(); history.endSession() }
+        history.mark(episode, animeTitle: animeTitle(for: episode), watched: watched)
+        // Marking invalidates the persisted session. A replay must enter through a fresh session.
+        if markingCurrentEpisode { returnToEpisodes() }
+    }
+
+    private func animeTitle(for episode: Episode) -> String {
+        if let media = detailsModel.media, media.id == episode.animeId { return media.title.preferred }
+        if let media = catalogModel.items.first(where: { $0.id == episode.animeId }) { return media.title.preferred }
+        return history.record(for: episode)?.title ?? "Demo anime"
     }
 
     func cancelResolution() {
@@ -137,6 +181,7 @@ final class JourneyModel: ObservableObject {
     func returnToEpisodes() {
         cancelResolution()
         playback.stop()
+        history.endSession()
         selectedEpisode = nil
         path.removeAll { if case .playback = $0 { return true }; return false }
     }
@@ -160,6 +205,7 @@ final class JourneyModel: ObservableObject {
     func leaveJourney() {
         background()
         playback.stop()
+        history.endSession()
         selectedEpisode = nil
         path = []
         resumeCatalog = false
@@ -169,6 +215,7 @@ final class JourneyModel: ObservableObject {
 
     private func cancelDetails() {
         detailsGeneration = UUID()
+        continueEpisodeID = nil
         detailsModel.cancel()
         episodeRequest?.cancel()
         episodeRequest = nil

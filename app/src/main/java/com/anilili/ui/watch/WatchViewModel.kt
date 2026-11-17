@@ -12,12 +12,11 @@ import com.anilili.data.ProviderSpeed
 import com.anilili.data.library.HistoryEntry
 import com.anilili.data.library.LibraryStore
 import com.anilili.data.library.resumeFor
+import com.anilili.history.WatchProgressPolicy
 import com.anilili.data.discord.DiscordPresence
 import com.anilili.data.discord.DiscordWatching
 import com.anilili.data.settings.SettingsStore
 import com.anilili.data.settings.DEFAULT_PREFERRED_PROVIDER
-import com.anilili.data.settings.WATCHED_THRESHOLD_MAX_PERCENT
-import com.anilili.data.settings.WATCHED_THRESHOLD_MIN_PERCENT
 import com.anilili.data.model.Category
 import com.anilili.data.model.EpisodeItem
 import com.anilili.data.model.EpisodesResult
@@ -2911,15 +2910,7 @@ internal fun shouldSyncAniListProgress(
     positionMs: Long,
     durationMs: Long,
     thresholdPercent: Int = SettingsStore.watchedThresholdPercent.value,
-): Boolean {
-    if (episodeNumber < 1 || episodeNumber % 1.0 != 0.0) return false
-    if (durationMs < MIN_ANILIST_SYNC_DURATION_MS || positionMs <= 0) return false
-    val fraction = thresholdPercent
-        .coerceIn(WATCHED_THRESHOLD_MIN_PERCENT, WATCHED_THRESHOLD_MAX_PERCENT) / 100.0
-    return positionMs.toDouble() / durationMs >= fraction
-}
-
-private const val MIN_ANILIST_SYNC_DURATION_MS = 60_000L
+): Boolean = WatchProgressPolicy.androidCompleted(episodeNumber, positionMs, durationMs, thresholdPercent)
 
 /**
  * How far into an episode the next one is resolved ahead of time.
