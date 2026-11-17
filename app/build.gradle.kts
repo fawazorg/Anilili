@@ -243,6 +243,7 @@ val syncParityCorpus = tasks.register<Sync>("syncParityCorpus") {
 tasks.named("preBuild") { dependsOn(syncParityCorpus) }
 
 dependencies {
+    implementation(project(":shared-core"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
 
     implementation(libs.androidx.core.ktx)
