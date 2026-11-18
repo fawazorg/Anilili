@@ -8,6 +8,7 @@ final class WatchHistoryModel: ObservableObject {
     @Published private(set) var records: [WatchProgress] = []
     @Published private(set) var continuing: [WatchProgress] = []
     @Published private(set) var errorMessage: String?
+    let providerId: String
     private let repository: WatchHistoryRepository
     private let saveIntervalMs: Int64
     private let now: () -> Int64
@@ -15,9 +16,10 @@ final class WatchHistoryModel: ObservableObject {
     private var sequence: Int64 = 0
     private var lastSavedAt: Int64 = 0
 
-    init(storage: WatchHistoryStorage = MemoryHistoryStorage(), rules: WatchHistoryRules? = nil, now: @escaping () -> Int64 = {
+    init(storage: WatchHistoryStorage = MemoryHistoryStorage(), providerId: String = "demo-v1", rules: WatchHistoryRules? = nil, now: @escaping () -> Int64 = {
         Int64(Date().timeIntervalSince1970 * 1_000)
     }) {
+        self.providerId = providerId
         let policy = rules ?? WatchHistoryRules(
             completionPercent: 90, minDurationMs: 60_000, resumeRewindMs: 3_000, saveIntervalMs: 10_000)
         repository = WatchHistoryRepository(storage: storage, rules: policy)
@@ -34,13 +36,13 @@ final class WatchHistoryModel: ObservableObject {
         if all.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageReadFailed) }
         records = all.records
         let recent = repository.continueWatching()
-        continuing = recent.records.filter { $0.identity.providerId == "demo-v1" && Int32($0.identity.animeId) != nil }
+        continuing = recent.records.filter { $0.identity.providerId == providerId && Int32($0.identity.animeId) != nil }
         if errorMessage == nil { errorMessage = recent.error }
         if recent.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageReadFailed) }
     }
 
     func record(for episode: Episode) -> WatchProgress? {
-        records.first { $0.identity.providerId == "demo-v1" && $0.identity.animeId == String(episode.animeId) && $0.identity.episodeId == episode.id }
+        records.first { $0.identity.providerId == providerId && $0.identity.animeId == String(episode.animeId) && $0.identity.episodeId == episode.id }
     }
 
     func begin(episode: Episode, animeTitle: String) -> Double {
@@ -85,7 +87,7 @@ final class WatchHistoryModel: ObservableObject {
     }
 
     private func identity(_ episode: Episode) -> WatchIdentity {
-        WatchIdentity(providerId: "demo-v1", animeId: String(episode.animeId), episodeId: episode.id)
+        WatchIdentity(providerId: providerId, animeId: String(episode.animeId), episodeId: episode.id)
     }
 }
 

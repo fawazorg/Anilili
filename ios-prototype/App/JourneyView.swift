@@ -1,14 +1,36 @@
 import SwiftUI
 import SharedCore
 
+/// One journey instance owns the selected provider and its player until the selection changes.
+struct ProviderJourneyView: View {
+    @State private var providerId = "demo-v1"
+    var body: some View {
+        VStack(spacing: 0) {
+            Picker("Video provider", selection: $providerId) {
+                Text("Demo").tag("demo-v1")
+                Text("Ani.pm").tag("anipm")
+                Text("AniChan").tag("anichan")
+            }.pickerStyle(.segmented).padding(.horizontal)
+                .accessibilityIdentifier("journey.provider")
+            JourneyView(providerId: providerId).id(providerId)
+        }
+    }
+}
+
 struct JourneyView: View {
-    @StateObject private var model = JourneyModel(history: WatchHistoryModel.persistent)
+    @StateObject private var model: JourneyModel
+    init(providerId: String = "demo-v1") {
+        _model = StateObject(wrappedValue: JourneyModel(
+            history: providerId == "demo-v1" ? WatchHistoryModel.persistent : WatchHistoryModel(
+                storage: HistoryFileStorage(fileURL: HistoryFileStorage.applicationURL()), providerId: providerId),
+            providerId: providerId))
+    }
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some View {
         NavigationStack(path: $model.path) {
             JourneyCatalogScreen(journey: model, catalog: model.catalogModel, history: model.history)
-                .navigationTitle("Demo catalog")
+                .navigationTitle(model.providerTitle)
                 .navigationDestination(for: JourneyModel.Route.self) { route in
                     switch route {
                     case .details:
@@ -34,13 +56,13 @@ private struct JourneyCatalogScreen: View {
 
     var body: some View {
         VStack(spacing: 12) {
-            Text("Original generated media · no provider login needed")
+            Text(journey.isDemo ? "Original generated media · no provider login needed" : "AniList catalog · episode availability is checked with \(journey.providerTitle)")
                 .font(.footnote).foregroundStyle(.secondary)
             HStack {
-                TextField("Search demo titles", text: $catalog.query)
+                TextField(journey.isDemo ? "Search demo titles" : "Search anime titles", text: $catalog.query)
                     .textFieldStyle(.roundedBorder).submitLabel(.search)
                     .onSubmit { journey.loadCatalog() }.accessibilityIdentifier("journey.search")
-                    .accessibilityLabel("Search original demo anime")
+                    .accessibilityLabel(journey.isDemo ? "Search original demo anime" : "Search anime for \(journey.providerTitle)")
                 Button { journey.loadCatalog() } label: { Text("Search").frame(minHeight: 44) }
                     .accessibilityIdentifier("journey.search.submit")
             }.padding(.horizontal)
@@ -79,7 +101,7 @@ private struct JourneyCatalogScreen: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(media.title.preferred).font(.headline).foregroundStyle(.primary)
                                     .fixedSize(horizontal: false, vertical: true)
-                                Text(media.format ?? "Original demo").font(.caption).foregroundStyle(.secondary)
+                                Text(media.format ?? (journey.isDemo ? "Original demo" : "Anime")).font(.caption).foregroundStyle(.secondary)
                             }
                             Spacer()
                             Image(systemName: "chevron.right").accessibilityHidden(true)
@@ -115,6 +137,12 @@ private struct JourneyDetailsScreen: View {
                     if let episodes = media.episodes { Text("\(episodes.intValue) episodes") }
                 }
             }
+            if !journey.isDemo {
+                Picker("Audio edition", selection: Binding(get: { journey.audio }, set: { journey.setAudio($0) })) {
+                    Text("Original / sub").tag("sub")
+                    Text("Dub").tag("dub")
+                }.accessibilityIdentifier("journey.audio")
+            }
             Section {
                 if journey.isLoadingEpisodes {
                     ProgressView("Loading episodes…")
@@ -144,7 +172,7 @@ private struct JourneyDetailsScreen: View {
                             }.frame(minHeight: 44, alignment: .leading)
                         }
                         .accessibilityHint("Resolve this episode and begin playback")
-                        .disabled(journey.resolvingEpisodeID != nil)
+                        .disabled(journey.resolvingEpisodeID != nil || journey.requiresSubtitleConsent)
                         .accessibilityIdentifier("journey.episode.\(episode.id)")
                         .contextMenu {
                             Button(history.record(for: episode)?.completed == true ? "Mark unwatched" : "Mark watched") {
@@ -167,12 +195,28 @@ private struct JourneyDetailsScreen: View {
                     Text("Select an episode to retry.").font(.caption)
                 }
             } header: { Text("Episodes") } footer: {
-                Text("MP4 is bundled for offline playback. HLS requires the local fixture server. The missing-source and invalid-media episodes demonstrate error handling.")
+                Text(journey.isDemo ? "MP4 is bundled for offline playback. HLS requires the local fixture server. The missing-source and invalid-media episodes demonstrate error handling." : "Catalog titles come from AniList. This provider may not carry the selected title or audio edition. Browser challenges and unsupported playback requirements are reported explicitly.")
             }
         }
         .navigationTitle("Anime details")
         .navigationBarTitleDisplayMode(.inline)
         .accessibilityIdentifier("journey.details")
+        .safeAreaInset(edge: .bottom) {
+            if journey.requiresSubtitleConsent {
+                // Keep this decision visible even after selecting an episode in a long list.
+                VStack(spacing: 8) {
+                    Text("External provider subtitles are unavailable in this player. Embedded HLS tracks remain available. Play without the external subtitles?")
+                        .font(.footnote)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("journey.subtitles.warning")
+                    Button { journey.playWithoutExternalSubtitles() } label: {
+                        Text("Play without external subtitles").frame(minHeight: 44)
+                    }.accessibilityIdentifier("journey.subtitles.confirm")
+                    Button { journey.cancelResolution() } label: { Text("Cancel").frame(minHeight: 44) }
+                        .accessibilityIdentifier("journey.subtitles.cancel")
+                }.padding().frame(maxWidth: .infinity).background(.regularMaterial)
+            }
+        }
     }
 }
 

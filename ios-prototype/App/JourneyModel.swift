@@ -19,6 +19,13 @@ final class JourneyModel: ObservableObject {
             if path.isEmpty && !oldValue.isEmpty { cancelDetails() }
         }
     }
+    let providerId: String
+    var isDemo: Bool { providerId == "demo-v1" }
+    var providerTitle: String { isDemo ? "Demo catalog" : (providerId == "anipm" ? "Ani.pm" : "AniChan") }
+    @Published private(set) var audio = "sub"
+    @Published private(set) var requiresSubtitleConsent = false
+    private var pendingSubtitleSource: PlaybackSource?
+    private var pendingSubtitleEpisode: Episode?
     @Published private(set) var episodes: [Episode] = []
     @Published private(set) var isLoadingEpisodes = false
     @Published private(set) var resolvingEpisodeID: String?
@@ -30,7 +37,8 @@ final class JourneyModel: ObservableObject {
     let history: WatchHistoryModel
     let catalogModel: CatalogModel
     let detailsModel: CatalogDetailsModel
-    private let episodeClient: EpisodeClient
+    private let episodeClient: EpisodeClient?
+    private let expandedClient: ExpandedProviderClient?
     private let sourceURL: (String) -> URL?
     private var episodeRequest: CatalogCancellation?
     private var resolutionRequest: CatalogCancellation?
@@ -47,15 +55,35 @@ final class JourneyModel: ObservableObject {
 
     init(transport: CatalogCallbackTransport = DemoJourneyTransport(),
          sourceURL: @escaping (String) -> URL? = JourneyModel.fixtureURL,
-         history: WatchHistoryModel? = nil, notificationCenter: NotificationCenter = .default) {
+         history: WatchHistoryModel? = nil, notificationCenter: NotificationCenter = .default,
+         providerId: String = "demo-v1", providerTransport: CatalogCallbackTransport? = nil,
+         providerBaseURL: String? = nil, embedBaseURL: String? = nil,
+         catalogEndpoint: String? = nil) {
+        precondition(["demo-v1", "anipm", "anichan"].contains(providerId))
+        self.providerId = providerId
         self.notificationCenter = notificationCenter
         playback = PlaybackModel(notificationCenter: notificationCenter)
-        let catalog = CatalogClient(transport: transport, endpoint: "demo://catalog")
+        let catalogTransport: CatalogCallbackTransport = providerId == "demo-v1" || catalogEndpoint != nil ? transport : URLSessionCatalogTransport()
+        let catalog = CatalogClient(transport: catalogTransport,
+            endpoint: catalogEndpoint ?? (providerId == "demo-v1" ? "demo://catalog" : "https://graphql.anilist.co"))
         catalogModel = CatalogModel(client: catalog)
         detailsModel = CatalogDetailsModel(client: catalog)
-        episodeClient = EpisodeClient(transport: transport, endpoint: "demo://episodes")
+        if providerId == "demo-v1" {
+            episodeClient = EpisodeClient(transport: transport, endpoint: "demo://episodes")
+            expandedClient = nil
+        } else {
+            episodeClient = nil
+            let native = providerTransport ?? URLSessionCatalogTransport()
+            if let base = providerBaseURL, let embed = embedBaseURL {
+                expandedClient = ExpandedProviderClient(transport: native, providerId: providerId,
+                    baseUrl: base, embedBaseUrl: embed, timeoutMs: 15_000)
+            } else {
+                expandedClient = ExpandedProviderClient(transport: native, providerId: providerId)
+            }
+        }
         self.sourceURL = sourceURL
-        let history = history ?? WatchHistoryModel()
+        let history = history ?? WatchHistoryModel(providerId: providerId)
+        precondition(history.providerId == providerId, "History must belong to the selected provider")
         self.history = history
         lifecycleObservers = [
             notificationCenter.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
@@ -125,7 +153,7 @@ final class JourneyModel: ObservableObject {
         isLoadingEpisodes = true
         let generation = detailsGeneration
         detailsModel.load(id: id)
-        episodeRequest = episodeClient.episodes(animeId: id, completion: JourneyEpisodesCompletion { [weak self] episodes, failure in
+        let completion = JourneyEpisodesCompletion { [weak self] episodes, failure in
             Task { @MainActor [weak self] in
                 guard let self, self.detailsGeneration == generation else { return }
                 self.episodes = episodes ?? []
@@ -135,20 +163,32 @@ final class JourneyModel: ObservableObject {
                 if let pending = self.continueEpisodeID {
                     self.continueEpisodeID = nil
                     if let episode = self.episodes.first(where: { $0.id == pending }) { self.selectEpisode(episode) }
+                    else if failure == nil { self.resolutionError = "This saved episode is no longer available from the selected provider." }
                 }
             }
-        })
+        }
+        if let expandedClient {
+            episodeRequest = expandedClient.episodes(animeId: id, audio: audio, completion: completion)
+        } else {
+            episodeRequest = episodeClient?.episodes(animeId: id, completion: completion)
+        }
+    }
+
+    func setAudio(_ value: String) {
+        guard ["sub", "dub"].contains(value), audio != value else { return }
+        returnToEpisodes()
+        audio = value
+        if let animeID, !path.isEmpty { loadDetailsAndEpisodes(animeID) }
     }
 
     func selectEpisode(_ episode: Episode) {
         // A selection owns the resolver until completion/cancellation; repeated taps do nothing.
-        guard let animeID, resolvingEpisodeID == nil, selectedEpisode == nil, episode.animeId == animeID else { return }
+        guard let animeID, resolvingEpisodeID == nil, selectedEpisode == nil, !requiresSubtitleConsent, episode.animeId == animeID else { return }
         resolutionGeneration = UUID()
         let generation = resolutionGeneration
         resolvingEpisodeID = episode.id
         resolutionError = nil
-        resolutionRequest = episodeClient.resolve(animeId: episode.animeId, episodeId: episode.id,
-            completion: JourneySourceCompletion { [weak self] source, failure in
+        let completion = JourneySourceCompletion { [weak self] source, failure in
                 Task { @MainActor [weak self] in
                     guard let self, self.resolutionGeneration == generation else { return }
                     self.resolvingEpisodeID = nil
@@ -158,23 +198,62 @@ final class JourneyModel: ObservableObject {
                         LocalDiagnostics.shared.record(category: .resolution, event: failure?.kind == .timeout ? .timedOut : .resolutionFailed, code: failure.map { Int($0.status) })
                         return
                     }
-                    guard let url = self.sourceURL(source.url) else {
-                        self.resolutionError = "The resolved media is unavailable on this device."
+                    if !self.isDemo && source.subtitleTracks.contains(where: { $0.url != nil }) {
+                        self.pendingSubtitleSource = source
+                        self.pendingSubtitleEpisode = episode
+                        self.requiresSubtitleConsent = true
                         return
                     }
-                    self.selectedEpisode = episode
-                    let resume = self.history.begin(episode: episode,
-                        animeTitle: self.animeTitle(for: episode))
-                    self.resumeFromSeconds = resume
-                    self.playback.load(url, headers: source.headers, resumeSeconds: resume)
-                    self.path.append(.playback(episode.id))
-                    self.playback.play()
+                    self.startPlayback(source: source, episode: episode)
                 }
-            })
+            }
+        if let expandedClient {
+            resolutionRequest = expandedClient.resolve(animeId: episode.animeId, episodeId: episode.id,
+                nowMs: Int64(Date().timeIntervalSince1970 * 1_000), completion: completion)
+        } else {
+            resolutionRequest = episodeClient?.resolve(animeId: episode.animeId, episodeId: episode.id, completion: completion)
+        }
+    }
+
+    /// Consent applies to this selection only. Other unsupported requirements remain enforced.
+    func playWithoutExternalSubtitles() {
+        guard requiresSubtitleConsent, let source = pendingSubtitleSource,
+              let episode = pendingSubtitleEpisode, let expandedClient else { return }
+        pendingSubtitleSource = nil
+        pendingSubtitleEpisode = nil
+        requiresSubtitleConsent = false
+        startPlayback(source: expandedClient.videoWithoutExternalSubtitles(source: source), episode: episode)
+    }
+
+    private func startPlayback(source: PlaybackSource, episode: Episode) {
+        guard let url = sourceURL(source.url) else {
+            resolutionError = "The resolved media is unavailable on this device."
+            return
+        }
+        if !isDemo, let reason = MediaSourcePolicy.shared.appleUnsupportedReason(
+            source: source, nowMs: Int64(Date().timeIntervalSince1970 * 1_000)) {
+            resolutionError = reason
+            return
+        }
+        let resume = history.begin(episode: episode, animeTitle: animeTitle(for: episode))
+        resumeFromSeconds = resume
+        if isDemo {
+            // Original demo file URLs are mapped by the existing allowlisted fixture adapter.
+            playback.load(url, headers: source.headers, resumeSeconds: resume)
+        } else if !playback.load(source: source, resumeSeconds: resume) {
+            resolutionError = playback.errorMessage ?? "The resolved media is unsupported."
+            playback.stop()
+            history.endSession()
+            return
+        }
+        selectedEpisode = episode
+        path.append(.playback(episode.id))
+        playback.play()
     }
 
     func continueWatching(_ record: WatchProgress) {
-        guard record.identity.providerId == "demo-v1", let id = Int32(record.identity.animeId) else { return }
+        guard record.identity.providerId == providerId, let id = Int32(record.identity.animeId) else { return }
+        if let restoredAudio = expandedClient?.episodeAudio(episodeId: record.identity.episodeId) { audio = restoredAudio }
         openAnime(id)
         continueEpisodeID = record.identity.episodeId
     }
@@ -195,6 +274,9 @@ final class JourneyModel: ObservableObject {
     }
 
     func cancelResolution() {
+        pendingSubtitleSource = nil
+        pendingSubtitleEpisode = nil
+        requiresSubtitleConsent = false
         resolutionGeneration = UUID()
         resolutionRequest?.cancel()
         resolutionRequest = nil
@@ -254,7 +336,8 @@ final class JourneyModel: ObservableObject {
         lifecycleObservers.forEach(notificationCenter.removeObserver)
         episodeRequest?.cancel()
         resolutionRequest?.cancel()
-        episodeClient.close()
+        episodeClient?.close()
+        expandedClient?.close()
     }
 }
 
