@@ -555,6 +555,8 @@ object PipeBridge {
         with(wv.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
+            // Preserve Web SQL for older WebView versions that still support it.
+            @Suppress("DEPRECATION")
             databaseEnabled = true
             allowFileAccess = false
             allowContentAccess = false

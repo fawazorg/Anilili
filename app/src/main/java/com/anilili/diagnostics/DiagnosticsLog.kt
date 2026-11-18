@@ -519,6 +519,7 @@ object DiagnosticsLog {
         store?.append(newEvent(level, category, name, message, attributes))
     }
 
+    @Suppress("DEPRECATION") // Thread.id is needed below API 36.
     private fun newEvent(
         level: String,
         category: String,
@@ -538,7 +539,7 @@ object DiagnosticsLog {
             process = processName,
             pid = Process.myPid(),
             thread = thread.name,
-            threadId = thread.id,
+            threadId = if (Build.VERSION.SDK_INT >= 36) thread.threadId() else thread.id,
             level = level,
             category = category.lowercase(Locale.US).take(40),
             name = name.lowercase(Locale.US).replace(' ', '_').take(80),
@@ -566,7 +567,10 @@ object DiagnosticsLog {
         val power = app.getSystemService(Context.POWER_SERVICE) as? PowerManager
         val display = (app.getSystemService(Context.DISPLAY_SERVICE) as? DisplayManager)
             ?.getDisplay(Display.DEFAULT_DISPLAY)
-        val hdrTypes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+        @Suppress("DEPRECATION") // HDR capabilities are needed on API 24–33.
+        val hdrTypes = if (Build.VERSION.SDK_INT >= 34) {
+            display?.mode?.supportedHdrTypes?.joinToString("/").orEmpty()
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
             display?.hdrCapabilities?.supportedHdrTypes?.joinToString("/").orEmpty()
         } else {
             "unavailable"

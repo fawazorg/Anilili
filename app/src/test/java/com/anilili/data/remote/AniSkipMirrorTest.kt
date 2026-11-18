@@ -25,8 +25,12 @@ class AniSkipMirrorTest {
     @Test
     fun `a mirrored file decodes in the shape the crawler writes`() {
         val raw = """{"v":1,"mal":21,"checked":2,"episodes":{"1":[["op",13.9,123.8,1430.7,"x"]]}}"""
-        val file = Json { ignoreUnknownKeys = true }.decodeFromString(KonohaSkipFile.serializer(), raw)
+        val file = fixtureJson.decodeFromString(KonohaSkipFile.serializer(), raw)
         assertEquals(21, file.mal)
         assertEquals(1, file.episodes["1"]?.size)
+    }
+
+    private companion object {
+        val fixtureJson = Json { ignoreUnknownKeys = true }
     }
 }

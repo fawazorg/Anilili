@@ -559,9 +559,9 @@ object EpisodeExport {
         val builder = MediaItem.Builder().setUri(download.uri)
         if (download.isAdaptive) builder.setMimeType(MimeTypes.APPLICATION_M3U8)
         val item = EpisodeDownloads.buildMediaItem(context, download.uri, builder)
-        val groups = MetadataRetriever
-            .retrieveMetadata(parameterSetSourceFactory(context, download), item)
-            .awaitResult()
+        val groups = MetadataRetriever.Builder(context, item)
+            .setMediaSourceFactory(parameterSetSourceFactory(context, download))
+            .build().use { it.retrieveTrackGroups().awaitResult() }
         val parameterSets = avcParameterSets(groups)
         if (parameterSets == null) {
             // Says what the source described instead, because "no parameter sets" on its own does

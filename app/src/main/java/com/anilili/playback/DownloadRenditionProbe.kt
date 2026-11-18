@@ -79,7 +79,9 @@ internal object DownloadRenditionProbe {
             .apply { if (stream.isHls) setMimeType(MimeTypes.APPLICATION_M3U8) }
             .build()
         val groups = withTimeoutOrNull(PROBE_TIMEOUT_MS) {
-            MetadataRetriever.retrieveMetadata(factory, item).awaitResult()
+            MetadataRetriever.Builder(context, item).setMediaSourceFactory(factory).build().use {
+                it.retrieveTrackGroups().awaitResult()
+            }
         } ?: return null
         return videoHeights(groups)
     }
