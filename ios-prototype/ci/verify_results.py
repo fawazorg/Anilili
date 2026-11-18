@@ -8,9 +8,9 @@ def verify(summary, tests_directory):
     sources = sorted(tests_directory.glob("*Tests.swift"))
     sources += sorted((tests_directory.parent / "UITests").glob("*Tests.swift"))
     counts = {str(source.relative_to(tests_directory.parent)): len(re.findall(r"\bfunc\s+test\w+\s*\(", source.read_text())) for source in sources}
-    required_suites = {"Tests/ExpandedProviderJourneyTests.swift", "Tests/LifecycleTests.swift", "Tests/DiagnosticsTests.swift", "UITests/AccessibilityUITests.swift", "Tests/PlaybackTests.swift", "Tests/CatalogTests.swift", "Tests/JourneyTests.swift", "UITests/JourneyUITests.swift", "Tests/WatchHistoryTests.swift", "Tests/ProviderCompatibilityTests.swift", "UITests/WatchHistoryUITests.swift"}
+    required_suites = {"Tests/OfflineDownloadTests.swift", "Tests/OfflineJourneyTests.swift", "Tests/ExpandedProviderJourneyTests.swift", "Tests/LifecycleTests.swift", "Tests/DiagnosticsTests.swift", "UITests/AccessibilityUITests.swift", "Tests/PlaybackTests.swift", "Tests/CatalogTests.swift", "Tests/JourneyTests.swift", "UITests/JourneyUITests.swift", "Tests/WatchHistoryTests.swift", "Tests/ProviderCompatibilityTests.swift", "UITests/WatchHistoryUITests.swift"}
     if not required_suites.issubset(counts) or any(counts[name] == 0 for name in required_suites):
-        raise ValueError("Required lifecycle, diagnostics, accessibility, playback, catalog, journey, history, and UI suites must contain tests")
+        raise ValueError("Required offline download/journey, lifecycle, diagnostics, accessibility, playback, catalog, journey, history, and UI suites must contain tests")
     required = sum(counts.values())
     passed = summary.get("passedTests", 0)
     failed = summary.get("failedTests", 0)

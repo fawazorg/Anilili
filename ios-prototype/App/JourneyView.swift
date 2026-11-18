@@ -175,6 +175,10 @@ private struct JourneyDetailsScreen: View {
                         .disabled(journey.resolvingEpisodeID != nil || journey.requiresSubtitleConsent)
                         .accessibilityIdentifier("journey.episode.\(episode.id)")
                         .contextMenu {
+                            if !journey.isDemo {
+                                Button("Download episode") { journey.downloadEpisode(episode) }
+                                    .disabled(journey.resolvingEpisodeID != nil || journey.requiresSubtitleConsent)
+                            }
                             Button(history.record(for: episode)?.completed == true ? "Mark unwatched" : "Mark watched") {
                                 journey.markEpisode(episode, watched: history.record(for: episode)?.completed != true)
                             }
@@ -205,12 +209,12 @@ private struct JourneyDetailsScreen: View {
             if journey.requiresSubtitleConsent {
                 // Keep this decision visible even after selecting an episode in a long list.
                 VStack(spacing: 8) {
-                    Text("External provider subtitles are unavailable in this player. Embedded HLS tracks remain available. Play without the external subtitles?")
+                    Text("External provider subtitles are unavailable in this player. Embedded HLS tracks remain available. Continue without the external subtitles?")
                         .font(.footnote)
                         .fixedSize(horizontal: false, vertical: true)
                         .accessibilityIdentifier("journey.subtitles.warning")
                     Button { journey.playWithoutExternalSubtitles() } label: {
-                        Text("Play without external subtitles").frame(minHeight: 44)
+                        Text(journey.subtitleActionTitle).frame(minHeight: 44)
                     }.accessibilityIdentifier("journey.subtitles.confirm")
                     Button { journey.cancelResolution() } label: { Text("Cancel").frame(minHeight: 44) }
                         .accessibilityIdentifier("journey.subtitles.cancel")

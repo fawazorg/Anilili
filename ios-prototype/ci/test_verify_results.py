@@ -22,18 +22,20 @@ class SimulatorResultsTests(unittest.TestCase):
         (directory / "DiagnosticsTests.swift").write_text("func testRedaction() {}")
         (ui / "AccessibilityUITests.swift").write_text("func testAccessibleNavigation() {}")
         (directory / "ExpandedProviderJourneyTests.swift").write_text("func testExpandedProviderJourney() {}")
+        (directory / "OfflineDownloadTests.swift").write_text("func testOfflineDownload() {}")
+        (directory / "OfflineJourneyTests.swift").write_text("func testOfflineJourney() {}")
         return directory
 
     def test_requires_all_suites_and_rejects_skipped_failed_or_missing_tests(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = self.make_suites(Path(temp))
-            summary = dict(totalTestCount=12, passedTests=12, failedTests=0, skippedTests=0)
-            self.assertEqual(verify(summary, directory), 12)
+            summary = dict(totalTestCount=14, passedTests=14, failedTests=0, skippedTests=0)
+            self.assertEqual(verify(summary, directory), 14)
             for overrides in [dict(totalTestCount=1, passedTests=1),
                               dict(passedTests=10, failedTests=1),
                               dict(passedTests=10, skippedTests=1),
                               dict(totalTestCount=0, passedTests=0),
-                              dict(totalTestCount=13, passedTests=13)]:
+                              dict(totalTestCount=15, passedTests=15)]:
                 with self.subTest(overrides=overrides):
                     with self.assertRaises(ValueError):
                         verify(summary | overrides, directory)
@@ -63,7 +65,7 @@ class SimulatorResultsTests(unittest.TestCase):
                 verify(summary, directory)
 
     def test_history_and_resume_suites_are_required(self):
-        for relative in ["Tests/ExpandedProviderJourneyTests.swift", "Tests/LifecycleTests.swift", "Tests/DiagnosticsTests.swift", "UITests/AccessibilityUITests.swift", "Tests/WatchHistoryTests.swift", "UITests/WatchHistoryUITests.swift", "Tests/ProviderCompatibilityTests.swift"]:
+        for relative in ["Tests/OfflineDownloadTests.swift", "Tests/OfflineJourneyTests.swift", "Tests/ExpandedProviderJourneyTests.swift", "Tests/LifecycleTests.swift", "Tests/DiagnosticsTests.swift", "UITests/AccessibilityUITests.swift", "Tests/WatchHistoryTests.swift", "UITests/WatchHistoryUITests.swift", "Tests/ProviderCompatibilityTests.swift"]:
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 directory = self.make_suites(root)

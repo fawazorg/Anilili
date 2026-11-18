@@ -26,6 +26,8 @@ final class JourneyModel: ObservableObject {
     @Published private(set) var requiresSubtitleConsent = false
     private var pendingSubtitleSource: PlaybackSource?
     private var pendingSubtitleEpisode: Episode?
+    private var pendingDownload = false
+    var subtitleActionTitle: String { pendingDownload ? "Download without external subtitles" : "Play without external subtitles" }
     @Published private(set) var episodes: [Episode] = []
     @Published private(set) var isLoadingEpisodes = false
     @Published private(set) var resolvingEpisodeID: String?
@@ -34,6 +36,7 @@ final class JourneyModel: ObservableObject {
     @Published private(set) var selectedEpisode: Episode?
     @Published private(set) var resumeFromSeconds = 0.0
     let playback: PlaybackModel
+    let downloads: OfflineDownloadEngine
     let history: WatchHistoryModel
     let catalogModel: CatalogModel
     let detailsModel: CatalogDetailsModel
@@ -42,6 +45,7 @@ final class JourneyModel: ObservableObject {
     private let sourceURL: (String) -> URL?
     private var episodeRequest: CatalogCancellation?
     private var resolutionRequest: CatalogCancellation?
+    private var localValidationTask: Task<Void, Never>?
     private var detailsGeneration = UUID()
     private var resolutionGeneration = UUID()
     private var animeID: Int32?
@@ -58,8 +62,9 @@ final class JourneyModel: ObservableObject {
          history: WatchHistoryModel? = nil, notificationCenter: NotificationCenter = .default,
          providerId: String = "demo-v1", providerTransport: CatalogCallbackTransport? = nil,
          providerBaseURL: String? = nil, embedBaseURL: String? = nil,
-         catalogEndpoint: String? = nil) {
+         catalogEndpoint: String? = nil, downloads: OfflineDownloadEngine? = nil) {
         precondition(["demo-v1", "anipm", "anichan"].contains(providerId))
+        self.downloads = downloads ?? OfflineDownloadEngine.shared
         self.providerId = providerId
         self.notificationCenter = notificationCenter
         playback = PlaybackModel(notificationCenter: notificationCenter)
@@ -181,7 +186,36 @@ final class JourneyModel: ObservableObject {
         if let animeID, !path.isEmpty { loadDetailsAndEpisodes(animeID) }
     }
 
+    func downloadIdentity(for episode: Episode) -> DownloadIdentity {
+        DownloadIdentity(providerId: providerId, animeId: String(episode.animeId), episodeId: episode.id)
+    }
+
+    func downloadEpisode(_ episode: Episode) { resolveEpisode(episode, forDownload: true) }
+
     func selectEpisode(_ episode: Episode) {
+        guard let animeID, resolvingEpisodeID == nil, selectedEpisode == nil,
+              !requiresSubtitleConsent, episode.animeId == animeID else { return }
+        let identity = downloadIdentity(for: episode)
+        if downloads.records.contains(where: { $0.identity == identity && $0.state == .completed }) {
+            resolutionGeneration = UUID()
+            let generation = resolutionGeneration
+            resolvingEpisodeID = episode.id
+            localValidationTask = Task { @MainActor [weak self] in
+                guard let self else { return }
+                let local = await self.downloads.validatedLocalURL(identity: identity)
+                guard !Task.isCancelled, self.resolutionGeneration == generation else { return }
+                self.resolvingEpisodeID = nil
+                self.localValidationTask = nil
+                if let local { self.startLocalPlayback(url: local, episode: episode) }
+                else { self.resolveEpisode(episode, forDownload: false) }
+            }
+            return
+        }
+        // A missing local file falls back to ordinary fresh provider resolution.
+        resolveEpisode(episode, forDownload: false)
+    }
+
+    private func resolveEpisode(_ episode: Episode, forDownload: Bool) {
         // A selection owns the resolver until completion/cancellation; repeated taps do nothing.
         guard let animeID, resolvingEpisodeID == nil, selectedEpisode == nil, !requiresSubtitleConsent, episode.animeId == animeID else { return }
         resolutionGeneration = UUID()
@@ -201,10 +235,12 @@ final class JourneyModel: ObservableObject {
                     if !self.isDemo && source.subtitleTracks.contains(where: { $0.url != nil }) {
                         self.pendingSubtitleSource = source
                         self.pendingSubtitleEpisode = episode
+                        self.pendingDownload = forDownload
                         self.requiresSubtitleConsent = true
                         return
                     }
-                    self.startPlayback(source: source, episode: episode)
+                    if forDownload { self.enqueueDownload(source: source, episode: episode) }
+                    else { self.startPlayback(source: source, episode: episode) }
                 }
             }
         if let expandedClient {
@@ -219,10 +255,30 @@ final class JourneyModel: ObservableObject {
     func playWithoutExternalSubtitles() {
         guard requiresSubtitleConsent, let source = pendingSubtitleSource,
               let episode = pendingSubtitleEpisode, let expandedClient else { return }
+        let download = pendingDownload
         pendingSubtitleSource = nil
         pendingSubtitleEpisode = nil
+        pendingDownload = false
         requiresSubtitleConsent = false
-        startPlayback(source: expandedClient.videoWithoutExternalSubtitles(source: source), episode: episode)
+        let supported = expandedClient.videoWithoutExternalSubtitles(source: source)
+        if download { enqueueDownload(source: supported, episode: episode) }
+        else { startPlayback(source: supported, episode: episode) }
+    }
+
+    private func enqueueDownload(source: PlaybackSource, episode: Episode) {
+        if !downloads.download(identity: downloadIdentity(for: episode), title: animeTitle(for: episode),
+            episodeTitle: episode.title, source: source, episodeNumber: episode.number) {
+            resolutionError = downloads.errorMessage ?? "The download could not be started."
+        }
+    }
+
+    private func startLocalPlayback(url: URL, episode: Episode) {
+        let resume = history.begin(episode: episode, animeTitle: animeTitle(for: episode))
+        resumeFromSeconds = resume
+        selectedEpisode = episode
+        playback.load(url, resumeSeconds: resume)
+        path.append(.playback(episode.id))
+        playback.play()
     }
 
     private func startPlayback(source: PlaybackSource, episode: Episode) {
@@ -270,10 +326,16 @@ final class JourneyModel: ObservableObject {
     private func animeTitle(for episode: Episode) -> String {
         if let media = detailsModel.media, media.id == episode.animeId { return media.title.preferred }
         if let media = catalogModel.items.first(where: { $0.id == episode.animeId }) { return media.title.preferred }
+        if let downloaded = downloads.records.first(where: {
+            $0.identity.providerId == providerId && $0.identity.animeId == String(episode.animeId) && $0.identity.episodeId == episode.id
+        }) { return downloaded.title }
         return history.record(for: episode)?.title ?? "Demo anime"
     }
 
     func cancelResolution() {
+        localValidationTask?.cancel()
+        localValidationTask = nil
+        pendingDownload = false
         pendingSubtitleSource = nil
         pendingSubtitleEpisode = nil
         requiresSubtitleConsent = false
@@ -336,6 +398,7 @@ final class JourneyModel: ObservableObject {
         lifecycleObservers.forEach(notificationCenter.removeObserver)
         episodeRequest?.cancel()
         resolutionRequest?.cancel()
+        localValidationTask?.cancel()
         episodeClient?.close()
         expandedClient?.close()
     }
