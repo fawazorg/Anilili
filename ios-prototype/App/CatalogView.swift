@@ -53,7 +53,7 @@ struct CatalogView: View {
     }
 }
 
-private struct CatalogCover: View {
+struct CatalogCover: View {
     let address: String?
     var body: some View {
         AsyncImage(url: address.flatMap(URL.init(string:))) { phase in

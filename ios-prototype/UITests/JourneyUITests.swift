@@ -3,7 +3,9 @@ import XCTest
 final class JourneyUITests: XCTestCase {
     func testPrimaryTabsExposeDownloadsAndManualPlaybackSettings() {
         let app = XCUIApplication()
+        app.launchArguments += ["-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
+        defer { app.terminate() }
 
         let tabs = app.tabBars
         XCTAssertTrue(tabs.buttons["Browse"].exists)
@@ -19,6 +21,9 @@ final class JourneyUITests: XCTestCase {
 
         tabs.buttons["Browse"].tap()
         XCTAssertTrue(app.textFields["journey.search"].waitForExistence(timeout: 5))
+        tabs.buttons["Settings"].tap()
+        XCTAssertTrue(app.textFields["playback.address"].waitForExistence(timeout: 5),
+                      "Settings should preserve its navigation destination across tab changes")
     }
 
     func testDemoCatalogToEpisodePlaybackAndBack() throws {
