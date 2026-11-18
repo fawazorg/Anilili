@@ -61,7 +61,7 @@ Changed files:
 | Android mobile and TV debug builds | PASS | Both `assembleMobileDebug` and `assembleTvDebug` succeeded locally. |
 | CI Python tests | PASS | 15 tests: fixture HTTP behavior, missing/skipped-result rejection, Release SDK/framework validation. |
 | Apple task names | PASS | Gradle enumerated `linkDebugFrameworkIosArm64`, `linkReleaseFrameworkIosArm64`, `linkReleaseFrameworkIosX64`. |
-| Phase 7 Native/Swift compilation and simulator tests | NOT TESTED | Linux has no Xcode or iOS simulator; GitHub execution is pending. |
+| Phase 7 Native/Swift compilation and simulator tests | FAIL | Run 44248659671 compiled successfully; all 56 Swift unit tests and two existing UI journeys passed. The new accessibility UI test failed locating a lazy offscreen episode row at maximum Dynamic Type. Its helper now scrolls before asserting existence; rerun pending. |
 | Release simulator/device builds | NOT TESTED | CI now requires both unsigned Release builds and validates resolved SDK, architecture, framework path, bundle identity, and copied privacy manifest. |
 | Signed device build / archive / TestFlight | BLOCKED | Apple signing team, certificates/provisioning and distribution setup are unavailable. |
 | Physical iPhone and live providers | NOT TESTED | Simulator fixtures do not establish hardware or live-provider compatibility. |

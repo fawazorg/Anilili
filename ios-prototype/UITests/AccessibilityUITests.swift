@@ -37,14 +37,20 @@ final class AccessibilityUITests: XCTestCase {
         screenshot.lifetime = .keepAlways
         add(screenshot)
         back.tap()
-        XCTAssertTrue(episode.waitForExistence(timeout: 10))
+        assertTouchTarget(episode, in: app)
         // This checks accessibility element labels and layout, not a running VoiceOver session.
     }
 
     private func assertTouchTarget(_ element: XCUIElement, in app: XCUIApplication,
                                    file: StaticString = #filePath, line: UInt = #line) {
-        XCTAssertTrue(element.waitForExistence(timeout: 20), file: file, line: line)
-        for _ in 0..<8 where !element.isHittable { app.swipeUp() }
+        // SwiftUI List creates offscreen rows lazily, especially at accessibility sizes.
+        // Scroll even when the element does not exist yet; waiting alone cannot reveal it.
+        _ = element.waitForExistence(timeout: 5)
+        for _ in 0..<12 {
+            if element.exists && element.isHittable { break }
+            app.swipeUp()
+        }
+        XCTAssertTrue(element.exists, file: file, line: line)
         XCTAssertTrue(element.isHittable, file: file, line: line)
         XCTAssertGreaterThanOrEqual(element.frame.height, 44, file: file, line: line)
         XCTAssertGreaterThanOrEqual(element.frame.width, 44, file: file, line: line)
