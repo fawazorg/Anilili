@@ -99,6 +99,44 @@ final class ProviderCompatibilityTests: XCTestCase {
         XCTAssertNil(value.errorMessage)
     }
 
+    func testCrossOriginRedirectBuildsAFreshRequestWithoutCredentialsOrBody() {
+        let initial = URL(string: "https://origin.fixture.invalid/resolve")!
+        let destination = URL(string: "https://destination.fixture.invalid/resolve")!
+        var proposed = URLRequest(url: destination)
+        proposed.httpMethod = "GET"
+        for name in ["Cookie", "Authorization", "Referer", "X-Fixture-Secret"] {
+            proposed.setValue("original-test-only", forHTTPHeaderField: name)
+        }
+        proposed.setValue("application/json", forHTTPHeaderField: "Accept")
+        proposed.setValue("AnililiFixture/1.0", forHTTPHeaderField: "User-Agent")
+        let session = URLSession(configuration: .ephemeral)
+        defer { session.invalidateAndCancel() }
+        let task = session.dataTask(with: initial)
+        let response = HTTPURLResponse(url: initial, statusCode: 302, httpVersion: nil,
+                                       headerFields: ["Location": destination.absoluteString])!
+        let policy = ProviderRedirectDelegate(initialURL: initial, allowLoopback: false)
+        var calls = 0
+        policy.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: proposed) { request in
+            calls += 1
+            XCTAssertEqual(request?.url, destination)
+            XCTAssertEqual(request?.httpMethod, "GET")
+            XCTAssertNil(request?.httpBody)
+            XCTAssertEqual(request?.httpShouldHandleCookies, false)
+            XCTAssertEqual(request?.value(forHTTPHeaderField: "User-Agent"), "AnililiFixture/1.0")
+            for name in ["Cookie", "Authorization", "Referer", "X-Fixture-Secret"] {
+                XCTAssertNil(request?.value(forHTTPHeaderField: name), name)
+            }
+        }
+        XCTAssertEqual(calls, 1)
+        proposed.httpMethod = "POST"
+        proposed.httpBody = Data("original-test-only-body".utf8)
+        policy.urlSession(session, task: task, willPerformHTTPRedirection: response, newRequest: proposed) { request in
+            calls += 1
+            XCTAssertNil(request, "Cross-origin request bodies must not be forwarded")
+        }
+        XCTAssertEqual(calls, 2)
+    }
+
     func testCrossOriginMetadataRedirectDoesNotForwardSyntheticCredentials() async throws {
         _ = try await audit(clear: true)
         let transport = URLSessionCatalogTransport(allowLoopback: true)

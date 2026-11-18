@@ -62,7 +62,7 @@ final class URLSessionCatalogTransport: NSObject, CatalogCallbackTransport {
 }
 
 /// Resolving metadata may redirect, but HTTPS cannot downgrade and credentials never cross origins.
-private final class ProviderRedirectDelegate: NSObject, URLSessionTaskDelegate {
+final class ProviderRedirectDelegate: NSObject, URLSessionTaskDelegate {
     private let initialURL: URL
     private let allowLoopback: Bool
     private var count = 0
@@ -76,8 +76,18 @@ private final class ProviderRedirectDelegate: NSObject, URLSessionTaskDelegate {
         var forwarded = request
         let previous = response.url ?? initialURL
         if previous.scheme != next.scheme || previous.host != next.host || previous.port != next.port {
-            forwarded.allHTTPHeaderFields = forwarded.allHTTPHeaderFields?.filter {
-                ["accept", "user-agent"].contains($0.key.lowercased())
+            // Replacing allHTTPHeaderFields on Foundation's proposed redirect request can
+            // retain its original headers. Build a new request instead of mutating that copy.
+            guard ["GET", "HEAD"].contains(request.httpMethod ?? "GET") else {
+                completionHandler(nil); return
+            }
+            forwarded = URLRequest(url: next, cachePolicy: request.cachePolicy,
+                                   timeoutInterval: request.timeoutInterval)
+            forwarded.httpMethod = request.httpMethod ?? "GET"
+            for (name, value) in request.allHTTPHeaderFields ?? [:] {
+                if ["accept", "user-agent"].contains(name.lowercased()) {
+                    forwarded.setValue(value, forHTTPHeaderField: name)
+                }
             }
         }
         forwarded.httpShouldHandleCookies = false
