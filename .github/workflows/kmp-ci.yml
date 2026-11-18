@@ -104,7 +104,7 @@ jobs:
             raise SystemExit(f'iOS simulator validation failed: executed={executed}, failures/errors={failures}, skipped={skipped}')
         print(f'iOS simulator tests executed: {executed}')
         PYTEST
-    - name: Build app and verify playback, history and restart journeys
+    - name: Verify provider compatibility, playback, history and restart journeys
       shell: bash
       run: |
         set -euo pipefail

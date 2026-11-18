@@ -14,13 +14,18 @@ import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.put
 
 /** Platform adapters own HTTP execution, credentials, retry policy, and cancellation. */
-data class CatalogHttpRequest(val url: String, val body: String)
-data class CatalogHttpResponse(val status: Int, val body: String)
+data class CatalogHttpRequest(val url: String, val body: String, val method: String, val headers: Map<String, String>) {
+    constructor(url: String, body: String) : this(url, body, "POST", emptyMap())
+}
+data class CatalogHttpResponse(val status: Int, val body: String, val headers: Map<String, String>, val finalUrl: String?) {
+    constructor(status: Int, body: String) : this(status, body, emptyMap(), null)
+    constructor(status: Int, body: String, headers: Map<String, String>) : this(status, body, headers, null)
+}
 fun interface CatalogHttpTransport {
     suspend fun post(request: CatalogHttpRequest): CatalogHttpResponse
 }
 
-enum class CatalogFailureKind { HTTP, GRAPHQL, MALFORMED, TRANSPORT }
+enum class CatalogFailureKind { HTTP, GRAPHQL, MALFORMED, TRANSPORT, TIMEOUT, EXPIRED, UNSUPPORTED }
 data class CatalogFailure(val kind: CatalogFailureKind, val status: Int, val message: String)
 class CatalogException(val failure: CatalogFailure) : Exception(failure.message)
 
