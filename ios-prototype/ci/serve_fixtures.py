@@ -17,6 +17,7 @@ class FixtureHandler(SimpleHTTPRequestHandler):
     audit_lock = threading.Lock()
     audit = []
     attempts = {}
+    offline_disabled = set()
 
     @classmethod
     def reset_audit(cls):
@@ -65,6 +66,41 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             self.attempts[path] = self.attempts.get(path, 0) + 1
             attempt = self.attempts[path]
         origin = f"http://127.0.0.1:{self.server.server_port}"
+        if path == "/provider/offline/gated.mp4":
+            if not cookie_matches or not ua_matches:
+                return self.provider_reply(403, {"error": "Fixture media requires scoped credentials"})
+            self.slow_transfer = True
+            self.path = "/progressive.mp4"
+            return None
+        isolated = re.fullmatch(r"/provider/offline/isolated/([A-Za-z0-9-]{1,64})/(media\.mp4|disable|hls/[A-Za-z0-9.-]+)", path)
+        if isolated:
+            identity, resource = isolated.groups()
+            if resource == "disable" and self.command == "POST":
+                with self.audit_lock:
+                    self.offline_disabled.add(identity)
+                return self.provider_reply(200, {"disabled": True})
+            with self.audit_lock:
+                disabled = identity in self.offline_disabled
+            if disabled:
+                return self.provider_reply(503, {"error": "This test's origin is offline"})
+            self.path = "/progressive.mp4" if resource == "media.mp4" else "/" + resource
+            return None
+        if path == "/provider/offline/slow.mp4":
+            self.slow_transfer = True
+            self.path = "/progressive.mp4"
+            return None  # Reuse the same Range-capable original file handler.
+        if path == "/provider/offline/truncated.mp4":
+            data = (Path(self.directory) / "progressive.mp4").read_bytes()[:4096]
+            self.send_response(200)
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Length", str(len(data) + 100000))
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            self.remaining = len(data)
+            return io.BytesIO(data)
+        if path == "/provider/offline/invalid.mp4":
+            return self.provider_reply(200, b"Original deliberately invalid MP4", "video/mp4")
         if path.startswith("/provider/expanded/"):
             return self.expanded_route(path, parse_qs(query), origin)
         if path.startswith("/provider/gated/"):
@@ -221,7 +257,7 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             return
 
     def do_POST(self):
-        if not urlsplit(self.path).path.startswith("/provider/expanded/"):
+        if not urlsplit(self.path).path.startswith(("/provider/expanded/", "/provider/offline/")):
             self.send_error(405)
             return
         try:
@@ -274,6 +310,8 @@ class FixtureHandler(SimpleHTTPRequestHandler):
         self.send_response(206 if request_range else 200)
         self.send_header("Content-Type", self.guess_type(str(path)))
         self.send_header("Accept-Ranges", "bytes")
+        self.send_header("ETag", f'"original-fixture-{size}"')
+        self.send_header("Last-Modified", self.date_time_string(path.stat().st_mtime))
         self.send_header("Content-Length", str(self.remaining))
         if request_range:
             self.send_header("Content-Range", f"bytes {start}-{end}/{size}")
@@ -289,10 +327,13 @@ class FixtureHandler(SimpleHTTPRequestHandler):
 
     def copyfile(self, source, outputfile):
         while self.remaining > 0:
-            chunk = source.read(min(65536, self.remaining))
+            chunk = source.read(min(2048 if getattr(self, "slow_transfer", False) else 65536, self.remaining))
             if not chunk:
                 break
             outputfile.write(chunk)
+            if getattr(self, "slow_transfer", False):
+                outputfile.flush()
+                time.sleep(0.05)
             self.remaining -= len(chunk)
 
 

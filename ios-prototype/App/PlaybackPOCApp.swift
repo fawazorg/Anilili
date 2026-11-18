@@ -1,14 +1,17 @@
 import SwiftUI
 import AVKit
+import UIKit
 
 @main
 struct PlaybackPOCApp: App {
+    @UIApplicationDelegateAdaptor(OfflineAppDelegate.self) private var appDelegate
     var body: some Scene {
         WindowGroup {
             TabView {
                 ProviderJourneyView().tabItem { Label("Demo journey", systemImage: "play.circle") }
                 CatalogView().tabItem { Label("AniList", systemImage: "magnifyingglass") }
                 PlaybackView().tabItem { Label("Playback", systemImage: "play.rectangle") }
+                DownloadsView().tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
             }
         }
     }
@@ -116,5 +119,17 @@ struct PlayerControls: View {
             .accessibilityLabel("Pause").accessibilityIdentifier("player.pause")
         Button { model.seek(by: 10) } label: { Text("+10 s").frame(minWidth: 44, minHeight: 44) }
             .accessibilityLabel("Seek forward ten seconds").accessibilityIdentifier("player.seek-forward")
+    }
+}
+
+
+final class OfflineAppDelegate: NSObject, UIApplicationDelegate {
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String,
+                     completionHandler: @escaping () -> Void) {
+        Task { @MainActor in
+            if !OfflineDownloadEngine.shared.handleBackgroundEvents(identifier: identifier, completion: completionHandler) {
+                completionHandler()
+            }
+        }
     }
 }

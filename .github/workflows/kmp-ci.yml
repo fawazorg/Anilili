@@ -21,6 +21,8 @@ jobs:
         packages: platform-tools
     - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.1'
     - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
     - name: Shared JVM tests, Android unit tests and both debug flavors
       run: ./gradlew :shared-core:jvmTest :app:testMobileDebugUnitTest :app:testTvDebugUnitTest :app:assembleMobileDebug
         :app:assembleTvDebug -x :app:syncParityCorpus --stacktrace
@@ -48,6 +50,14 @@ jobs:
         packages: platform-tools
     - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.1'
     - uses: gradle/actions/setup-gradle@v4
+      with:
+        cache-read-only: false
+    - name: Restore Kotlin Native toolchain
+      id: native-cache
+      uses: actions/cache/restore@v4
+      with:
+        path: ~/.konan
+        key: konan-${{ runner.os }}-${{ runner.arch }}-xcode16.4-${{ hashFiles('gradle/libs.versions.toml', 'gradle/wrapper/gradle-wrapper.properties') }}
     - name: Inspect Xcode, project, and compatible simulators
       shell: bash
       run: |
@@ -103,6 +113,12 @@ jobs:
             raise SystemExit(f'iOS simulator validation failed: executed={executed}, failures/errors={failures}, skipped={skipped}')
         print(f'iOS simulator tests executed: {executed}')
         PYTEST
+    - name: Save validated Kotlin Native toolchain before playback tests
+      if: steps.native-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v4
+      with:
+        path: ~/.konan
+        key: ${{ steps.native-cache.outputs.cache-primary-key }}
     - name: Verify provider compatibility, playback, history and restart journeys
       shell: bash
       run: |
@@ -116,11 +132,39 @@ jobs:
           sleep 1
         done
         curl --fail --silent http://127.0.0.1:8765/progressive.mp4 > /dev/null
-        xcodebuild test -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+        test_build="$RUNNER_TEMP/PlaybackTests"
+        xcodebuild build-for-testing -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+          -configuration Debug -sdk iphonesimulator \
           -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+          -derivedDataPath "$test_build" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+          2>&1 | tee ios-prototype/Results/test-build.log
+        test_app="$test_build/Build/Products/Debug-iphonesimulator/PlaybackPOC.app"
+        # Keep Xcode's host-valid signature. Simulator claims live in __TEXT,__entitlements;
+        # copying iOS claims into the host signature causes a Taskgated launch rejection.
+        codesign --verify --deep --strict "$test_app"
+        python3 ios-prototype/ci/verify_simulator_signing.py \
+          "$test_app/PlaybackPOC" org.anilili.playbackpoc --mach-o \
+          --output ios-prototype/Results/test-host-entitlements.plist
+        xcrun simctl install "$IOS_SIMULATOR_UDID" "$test_app"
+        xcrun simctl launch --terminate-running-process "$IOS_SIMULATOR_UDID" org.anilili.playbackpoc \
+          2>&1 | tee ios-prototype/Results/launch-smoke.log
+        xcrun simctl terminate "$IOS_SIMULATOR_UDID" org.anilili.playbackpoc
+        # Fail quickly on the active HLS regression; a successful preflight still requires
+        # the complete suite and its zero-skipped/missing-test guard below.
+        xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+          -configuration Debug -sdk iphonesimulator \
+          -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+          -derivedDataPath "$test_build" -parallel-testing-enabled NO \
+          -only-testing:PlaybackPOCTests/OfflineDownloadTests/testHLSNativePackagePlaysAfterItsOriginIsDisabled \
+          -resultBundlePath ios-prototype/Results/HLSPreflight.xcresult \
+          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- 2>&1 | tee ios-prototype/Results/hls-preflight.log
+        xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+          -configuration Debug -sdk iphonesimulator \
+          -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+          -derivedDataPath "$test_build" \
           -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
           -resultBundlePath ios-prototype/Results/Playback.xcresult \
-          CODE_SIGNING_ALLOWED=NO 2>&1 | tee ios-prototype/Results/xcodebuild.log
+          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- 2>&1 | tee ios-prototype/Results/xcodebuild.log
         kill -0 "$fixture_pid"
         xcrun xcresulttool get test-results summary --path ios-prototype/Results/Playback.xcresult \
           > ios-prototype/Results/test-summary.json
