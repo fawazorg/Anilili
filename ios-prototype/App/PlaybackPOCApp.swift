@@ -6,7 +6,7 @@ struct PlaybackPOCApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                JourneyView().tabItem { Label("Demo journey", systemImage: "play.circle") }
+                ProviderJourneyView().tabItem { Label("Demo journey", systemImage: "play.circle") }
                 CatalogView().tabItem { Label("AniList", systemImage: "magnifyingglass") }
                 PlaybackView().tabItem { Label("Playback", systemImage: "play.rectangle") }
             }

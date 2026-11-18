@@ -102,75 +102,15 @@ internal class AniPmProvider(private val client: OkHttpClient, private val json:
     }
 }
 
-/** Pure payload handling for [AniPmProvider], kept network-free for unit tests. */
+/** Android adapter delegates payload semantics to the shared parser. */
 internal object AniPmParser {
-
-    fun availability(root: JsonObject): EpisodeAvailability {
-        val episodes = root["episodes"] as? JsonObject ?: return EpisodeAvailability(emptySet(), emptySet())
-        val sub = mutableSetOf<Int>()
-        val dub = mutableSetOf<Int>()
-        for ((key, value) in episodes) {
-            val number = key.toIntOrNull()?.takeIf { it > 0 } ?: continue
-            val entry = value as? JsonObject ?: continue
-            if (entry.flag("sub")) sub += number
-            if (entry.flag("dub")) dub += number
-        }
-        return EpisodeAvailability(sub, dub)
+    fun availability(root: JsonObject): EpisodeAvailability =
+        com.anilili.provider.AniPmSharedParser.availability(root).let { EpisodeAvailability(it.sub, it.dub) }
+    fun sources(session: JsonObject, skip: SkipTimes?): SourcesResult =
+        com.anilili.provider.AniPmSharedParser.sources(session, skip?.let {
+            com.anilili.provider.ProviderSkip(it.introStart, it.introEnd, it.outroStart, it.outroEnd)
+        }).toAndroidSources().copy(skip = skip)
+    fun skip(bootstrap: JsonObject): SkipTimes? = com.anilili.provider.AniPmSharedParser.skip(bootstrap)?.let {
+        SkipTimes(it.introStart, it.introEnd, it.outroStart, it.outroEnd)
     }
-
-    fun sources(session: JsonObject, skip: SkipTimes?): SourcesResult {
-        val source = session.string("source")?.takeIf { it.startsWith("https://") }
-            ?: error("Settlar session carried no stream")
-        val kind = session.string("kind") ?: "hls"
-        val stream = StreamItem(
-            url = source,
-            type = kind,
-            // The master publishes its own ladder, from a single 1080p to 144p-1080p per title.
-            quality = null,
-            audio = null,
-            referer = null,
-            isActive = true,
-            width = null,
-            height = null,
-        )
-        val subtitles = (session["subtitles"] as? JsonArray).orEmpty()
-            .mapNotNull { it as? JsonObject }
-            .filter { it.string("url")?.startsWith("https://") == true }
-            .sortedByDescending { (it["default"] as? JsonPrimitive)?.booleanOrNull == true }
-            .map { track ->
-                val code = track.string("srclang").orEmpty().lowercase()
-                SubtitleItem(
-                    url = track.string("url").orEmpty(),
-                    label = track.string("label")?.trim()?.takeIf { it.isNotEmpty() } ?: "Subtitles",
-                    language = LANGUAGES[code] ?: code.ifEmpty { "und" },
-                )
-            }
-            .distinctBy(SubtitleItem::url)
-        return SourcesResult(streams = listOf(stream), subtitles = subtitles, skip = skip, download = null)
-    }
-
-    /** `skip: {op:{start,end}, ed:{start,end}}` from the bootstrap, or null so AniSkip gets its turn. */
-    fun skip(bootstrap: JsonObject): SkipTimes? {
-        val skip = bootstrap["skip"] as? JsonObject ?: return null
-        val op = skip["op"] as? JsonObject
-        val ed = skip["ed"] as? JsonObject
-        return SkipTimes(
-            introStart = op?.number("start"),
-            introEnd = op?.number("end"),
-            outroStart = ed?.number("start"),
-            outroEnd = ed?.number("end"),
-        ).takeIf { it.hasUsableWindow() }
-    }
-
-    /** Settlar mixes two- and three-letter codes (`en`, `ind`, `tha`, `chi`) in one list. */
-    private val LANGUAGES = mapOf(
-        "ind" to "id", "tha" to "th", "chi" to "zh", "zho" to "zh", "kor" to "ko", "pol" to "pl",
-        "tur" to "tr", "jpn" to "ja", "eng" to "en", "spa" to "es", "por" to "pt", "fre" to "fr",
-        "fra" to "fr", "ger" to "de", "deu" to "de", "ita" to "it", "rus" to "ru", "ara" to "ar",
-        "vie" to "vi", "may" to "ms", "msa" to "ms",
-    )
-
-    private fun JsonObject.flag(name: String): Boolean = (this[name] as? JsonPrimitive)?.booleanOrNull == true
-    private fun JsonObject.string(name: String): String? = (this[name] as? JsonPrimitive)?.contentOrNull
-    private fun JsonObject.number(name: String): Double? = (this[name] as? JsonPrimitive)?.doubleOrNull
 }

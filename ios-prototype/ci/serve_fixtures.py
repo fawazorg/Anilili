@@ -65,6 +65,8 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             self.attempts[path] = self.attempts.get(path, 0) + 1
             attempt = self.attempts[path]
         origin = f"http://127.0.0.1:{self.server.server_port}"
+        if path.startswith("/provider/expanded/"):
+            return self.expanded_route(path, parse_qs(query), origin)
         if path.startswith("/provider/gated/"):
             if not cookie_matches or not ua_matches:
                 return self.provider_reply(403, {"error": "Fixture media requires its synthetic cookie and user agent"})
@@ -131,6 +133,77 @@ class FixtureHandler(SimpleHTTPRequestHandler):
             return self.provider_reply(200, result)
         return self.provider_reply(404, {})
 
+    def expanded_route(self, path, query, origin):
+        """Original provider-shaped metadata; session values are synthetic and local only."""
+        prefix = "/provider/expanded/"
+        provider, _, route = path.removeprefix(prefix).partition("/")
+        base = origin + prefix + provider
+        if provider not in ("anipm", "anichan"):
+            return self.provider_reply(404, {})
+        if route != "catalog" and not route.startswith("media/") and not self.headers.get("User-Agent", "").startswith("Mozilla/"):
+            return self.provider_reply(403, {"error": "Fixture requires provider User-Agent"})
+        if route == "catalog":
+            # The existing AniList parser owns catalog/details; this is only its raw HTTP fixture.
+            request = getattr(self, "json_body", {})
+            media = dict(id=101, title={"english": "Original Provider Fixture"},
+                         description="Original deterministic provider journey", episodes=2)
+            body = {"Media": media} if "Media(" in request.get("query", "") else {"Page": {"media": [media]}}
+            return self.provider_reply(200, {"data": body})
+        if provider == "anipm":
+            if route == "api/anime/anipm-server/_packages":
+                return self.provider_reply(200, {"episodes": {"1": {"sub": True, "dub": True},
+                                                             "2": {"sub": True, "dub": False}}})
+            if route.startswith("api/anime/playback-bootstrap/anilist/"):
+                return self.provider_reply(200, {"effectiveLanguage": query.get("lang", ["sub"])[0],
+                                                "settlarSelection": "original & selection"})
+            if route == "api/anime/settlar/session":
+                valid = query.get("selection") == ["original & selection"] and query.get("provider") == ["anipm"]
+                if not valid:
+                    return self.provider_reply(400, {})
+                episode = query.get("ep", ["1"])[0]
+                return self.provider_reply(200, {"embedUrl": base + "/embed?t=original%26token%3D" + episode})
+            if route == "api/embed/session":
+                token = query.get("t", [""])[0]
+                if token not in ("original&token=1", "original&token=2"):
+                    return self.provider_reply(403, {})
+                progressive = token.endswith("1")
+                subtitles = [] if progressive else [{"url": "https://example.invalid/original.vtt", "srclang": "en", "label": "Original external captions"}]
+                return self.provider_reply(200, {"source": origin + ("/progressive.mp4" if progressive else "/hls/master.m3u8"),
+                                                "kind": "mp4" if progressive else "hls", "subtitles": subtitles})
+        else:
+            if route == "site-config":
+                return self.provider_reply(200, {"turnstileSiteKey": None})
+            if route == "api/watch/episodes":
+                return self.provider_reply(200, {"episodes": 2, "dubAvailable": True})
+            if route == "api/watch/session" and self.command == "POST":
+                if getattr(self, "json_body", None) != {"token": ""}:
+                    return self.provider_reply(403, {})
+                return self.provider_reply(200, {"exp": int(time.time()) + 7200},
+                    headers={"Set-Cookie": "anichan_ws=original-session; Path=/; HttpOnly; SameSite=Lax"})
+            if route == "api/watch/servers":
+                valid = self.headers.get("Cookie") == "anichan_ws=original-session"
+                with self.audit_lock:
+                    self.audit[-1]["providerSessionMatched"] = valid
+                if not valid:
+                    return self.provider_reply(401, {"detail": "session"})
+                subtitles = [{"url": "https://example.invalid/original.vtt", "lang": "English"}] if query.get("ep") == ["2"] else []
+                return self.provider_reply(200, {"servers": [{"name": "anichan", "label": "★ AniChan",
+                    "rank": 1, "stream": "/media/master.m3u8", "subtitles": subtitles}]})
+            if route.startswith("media/"):
+                relative = route.removeprefix("media/")
+                if relative in ("master.m3u8", "index.m3u8", "audio.m3u8", "subtitles.m3u8"):
+                    contents = (Path(self.directory) / "hls" / relative).read_text()
+                    # Exercise AniChan's image-extension/MIME MPEG-TS delivery explicitly.
+                    contents = re.sub(r"(?m)^([^#\n]+\.ts)$", r"\1.png", contents)
+                    return self.provider_reply(200, contents.encode(), "application/vnd.apple.mpegurl")
+                if re.fullmatch(r"(?:segment|audio)-\d{2}\.ts\.png", relative):
+                    media = Path(self.directory) / "hls" / relative.removesuffix(".png")
+                    if media.is_file():
+                        return self.provider_reply(200, media.read_bytes(), "image/png")
+                if relative == "subtitles.vtt":
+                    return self.provider_reply(200, (Path(self.directory) / "hls" / relative).read_bytes(), "text/vtt")
+        return self.provider_reply(404, {})
+
     extensions_map = {**SimpleHTTPRequestHandler.extensions_map, ".ts": "video/mp2t",
                       ".m3u8": "application/vnd.apple.mpegurl", ".vtt": "text/vtt", ".mp4": "video/mp4"}
 
@@ -144,6 +217,28 @@ class FixtureHandler(SimpleHTTPRequestHandler):
     def do_HEAD(self):
         try:
             super().do_HEAD()
+        except (BrokenPipeError, ConnectionResetError):
+            return
+
+    def do_POST(self):
+        if not urlsplit(self.path).path.startswith("/provider/expanded/"):
+            self.send_error(405)
+            return
+        try:
+            size = int(self.headers.get("Content-Length", "0"))
+            if not 0 <= size <= 65536:
+                self.send_error(413)
+                return
+            self.json_body = json.loads(self.rfile.read(size))
+            if not isinstance(self.json_body, dict):
+                self.send_error(400)
+                return
+            source = self.send_head()
+            if source:
+                with source:
+                    self.copyfile(source, self.wfile)
+        except (ValueError, TypeError):
+            self.send_error(400)
         except (BrokenPipeError, ConnectionResetError):
             return
 
