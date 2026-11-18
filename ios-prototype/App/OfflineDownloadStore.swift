@@ -90,7 +90,12 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
         }
         return url
     }
-    private struct PackageReceipt: Codable { let relative: String; let digest: String }
+    private struct PackageReceipt: Codable {
+        let relative: String?
+        let digest: String
+        var bookmark: Data? = nil
+        var version: Int? = nil
+    }
     private func binding(_ key: String, _ relative: String) -> String {
         SHA256.hash(data: Data((key + "\0" + relative).utf8)).map { String(format: "%02x", $0) }.joined()
     }
@@ -121,12 +126,40 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
         let receipt = PackageReceipt(relative: relative, digest: binding(key, relative))
         try JSONEncoder().encode(receipt).write(to: pointer(key), options: .atomic)
     }
+    /// Only the engine's verified AVAssetDownloadDelegate callbacks may issue this reference.
+    /// AVFoundation may choose a managed media directory outside NSHomeDirectory on Simulator.
+    /// Do not relocate the package or turn this into an arbitrary-path import API.
+    func rememberManagedHLSFromDelegate(location: URL, key: String) throws {
+        guard key.hasSuffix(".movpkg"), safeManagedPackage(location) else { throw Failure.invalidPath }
+        let bookmark = try location.bookmarkData()
+        let receipt = PackageReceipt(relative: nil, digest: binding(key, "bookmark-v2:" + bookmark.base64EncodedString()),
+                                     bookmark: bookmark, version: 2)
+        try files.createDirectory(at: root, withIntermediateDirectories: true)
+        try JSONEncoder().encode(receipt).write(to: pointer(key), options: .atomic)
+    }
+    private func safeManagedPackage(_ url: URL) -> Bool {
+        // The authority is the native callback/bookmark, never a provider response or stored raw path.
+        guard url.isFileURL, url.pathExtension == "movpkg",
+              let values = try? url.resourceValues(forKeys: [.isDirectoryKey, .isSymbolicLinkKey]) else { return false }
+        return values.isDirectory == true && values.isSymbolicLink != true
+    }
     func hlsURL(key: String) -> URL? {
         guard key.hasSuffix(".movpkg"), let file = try? pointer(key),
-              let data = try? Data(contentsOf: file), let receipt = try? JSONDecoder().decode(PackageReceipt.self, from: data),
-              receipt.digest == binding(key, receipt.relative),
-              !receipt.relative.hasPrefix("/"), !receipt.relative.split(separator: "/").contains("..") else { return nil }
-        let value = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(receipt.relative)
+              let data = try? Data(contentsOf: file), let receipt = try? JSONDecoder().decode(PackageReceipt.self, from: data) else { return nil }
+        if let bookmark = receipt.bookmark {
+            guard receipt.version == 2, receipt.relative == nil,
+                  receipt.digest == binding(key, "bookmark-v2:" + bookmark.base64EncodedString()) else { return nil }
+            var stale = false
+            guard let value = try? URL(resolvingBookmarkData: bookmark, bookmarkDataIsStale: &stale),
+                  safeManagedPackage(value) else { return nil }
+            if stale { try? rememberManagedHLSFromDelegate(location: value, key: key) }
+            return value
+        }
+        // Existing receipts retain their stricter app-home-relative interpretation.
+        guard receipt.version == nil, let relative = receipt.relative,
+              receipt.digest == binding(key, relative),
+              !relative.hasPrefix("/"), !relative.split(separator: "/").contains("..") else { return nil }
+        let value = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).appendingPathComponent(relative)
         return safeSystemPackage(value) && files.fileExists(atPath: value.path) ? value : nil
     }
     func mediaExists(key: String) -> Bool {

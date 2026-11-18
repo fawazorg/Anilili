@@ -48,9 +48,11 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
     }
     private struct Descriptor: Codable {
         let provider: String; let anime: String; let episode: String; let generation: Int64; let key: String
-        init(session: DownloadSession, key: String) {
+        let destination: String?
+        init(session: DownloadSession, key: String, destination: URL? = nil) {
             provider = session.identity.providerId; anime = session.identity.animeId
             episode = session.identity.episodeId; generation = session.generation; self.key = key
+            self.destination = destination?.absoluteString
         }
         var session: DownloadSession {
             DownloadSession(identity: DownloadIdentity(providerId: provider, animeId: anime, episodeId: episode), generation: generation)
@@ -158,7 +160,7 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
             if paused.task.state == .suspended,
                paused.profile == source {
                 let task = paused.task
-                task.taskDescription = String(data: try! JSONEncoder().encode(Descriptor(session: session, key: paused.key)), encoding: .utf8)
+                task.taskDescription = String(data: try! JSONEncoder().encode(Descriptor(session: session, key: paused.key, destination: paused.stagedURL)), encoding: .utf8)
                 jobs[task.taskIdentifier] = Job(session: session, key: paused.key, task: task, profile: source, stagedURL: paused.stagedURL)
                 task.resume(); return
             }
@@ -356,11 +358,13 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
                     guard let text = task.taskDescription, let data = text.data(using: .utf8),
                           let item = try? JSONDecoder().decode(Descriptor.self, from: data) else { task.cancel(); continue }
                     if task.state == .suspended, self.records.contains(where: { self.same($0.identity, item.session.identity) && $0.generation > item.generation && $0.state == .paused }) {
-                        self.suspendedHLS[self.id(item.session.identity)] = Job(session: item.session, key: item.key, task: task)
+                        self.suspendedHLS[self.id(item.session.identity)] = Job(session: item.session, key: item.key, task: task,
+                            stagedURL: self.store.hlsURL(key: item.key) ?? item.destination.flatMap { URL(string: $0) })
                         continue
                     }
                     guard self.records.contains(where: { self.same($0.identity, item.session.identity) && $0.generation == item.generation && $0.state == .downloading }) else { task.cancel(); continue }
-                    self.jobs[task.taskIdentifier] = Job(session: item.session, key: item.key, task: task)
+                    self.jobs[task.taskIdentifier] = Job(session: item.session, key: item.key, task: task,
+                        stagedURL: self.store.hlsURL(key: item.key) ?? item.destination.flatMap { URL(string: $0) })
                     active.insert(self.id(item.session.identity))
                 }
                 for record in self.records where interrupted.contains(self.id(record.identity)) && (record.state == .queued || record.state == .downloading) && !active.contains(self.id(record.identity)) {
@@ -428,33 +432,33 @@ extension OfflineDownloadEngine: URLSessionDownloadDelegate, AVAssetDownloadDele
     }
     @available(iOS 18.0, *)
     nonisolated func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, willDownloadTo location: URL) {
-        // Both callbacks only register Apple's location; didComplete validates offline availability.
+        // Capture the system location; only task completion can publish completed offline media.
         self.urlSession(session, assetDownloadTask: assetDownloadTask, didFinishDownloadingTo: location)
     }
     nonisolated func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didFinishDownloadingTo location: URL) {
         MainActor.assumeIsolated {
             guard var job = jobs[assetDownloadTask.taskIdentifier], job.task === assetDownloadTask else {
                 if var paused = suspendedHLS.values.first(where: { $0.task === assetDownloadTask }) {
-                    do { try store.rememberHLS(location: location, key: paused.key); paused.stagedURL = location; suspendedHLS[id(paused.session.identity)] = paused }
+                    do { try store.rememberManagedHLSFromDelegate(location: location, key: paused.key); paused.stagedURL = location; suspendedHLS[id(paused.session.identity)] = paused }
                     catch { errorMessage = "The paused HLS package could not be registered safely." }
                     return
                 }
                 if let description = assetDownloadTask.taskDescription, let data = description.data(using: .utf8),
                    let item = try? JSONDecoder().decode(Descriptor.self, from: data) {
                     if !records.contains(where: { $0.state == .completed && $0.localMediaKey == item.key }) {
-                        try? store.rememberHLS(location: location, key: item.key)
+                        try? store.rememberManagedHLSFromDelegate(location: location, key: item.key)
                         try? store.remove(key: item.key)
                     }
                 }
                 return
             }
-            do { try store.rememberHLS(location: location, key: job.key); job.stagedURL = location; jobs[assetDownloadTask.taskIdentifier] = job }
-            catch {
-                // Only a fixed category is exposed: no media URLs, package names or credentials.
-                let category = (error as? OfflineDownloadStore.HLSLocationFailure)?.rawValue ?? "receiptWriteFailed"
-                assetDownloadTask.cancel()
-                failed(assetDownloadTask, kind: .storage, message: "The HLS package could not be registered (\(category)).")
-            }
+            job.stagedURL = location
+            jobs[assetDownloadTask.taskIdentifier] = job
+            // The task description is OS-persisted and contains local metadata only, never a source URL.
+            assetDownloadTask.taskDescription = String(data: try! JSONEncoder().encode(
+                Descriptor(session: job.session, key: job.key, destination: location)), encoding: .utf8)
+            // willDownloadTo may precede package creation. Retry durable bookmarking on completion.
+            try? store.rememberManagedHLSFromDelegate(location: location, key: job.key)
         }
     }
     nonisolated func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didLoad timeRange: CMTimeRange,
@@ -490,6 +494,15 @@ extension OfflineDownloadEngine: URLSessionDownloadDelegate, AVAssetDownloadDele
                 return
             }
             guard let url = job.stagedURL else { failed(task, kind: .corrupt, message: "The server did not produce complete offline media."); return }
+            if task is AVAssetDownloadTask {
+                do { try store.rememberManagedHLSFromDelegate(location: url, key: job.key) }
+                catch {
+                    LocalDiagnostics.shared.record(category: .persistence, event: .storageWriteFailed,
+                                                   code: (error as NSError).code)
+                    failed(task, kind: .storage, message: "The HLS download could not be saved. Please retry.")
+                    return
+                }
+            }
             let finalization = ObjectIdentifier(task)
             finalizing.insert(finalization)
             Task { @MainActor [weak self] in

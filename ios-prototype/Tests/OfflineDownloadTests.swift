@@ -124,7 +124,11 @@ final class OfflineDownloadTests: XCTestCase {
         }
         XCTAssertEqual(downloads.records.first?.state, .completed, downloads.errorMessage ?? "HLS did not complete")
         let local = try XCTUnwrap(downloads.localURL(identity: identity()))
-        XCTAssertTrue(AVURLAsset(url: local).assetCache?.isPlayableOffline == true)
+        let key = try XCTUnwrap(downloads.records.first?.localMediaKey)
+        let reopened = OfflineDownloadStore(root: storage.root)
+        let restored = try XCTUnwrap(reopened.hlsURL(key: key))
+        XCTAssertEqual(restored.standardizedFileURL.path, local.standardizedFileURL.path)
+        XCTAssertTrue(AVURLAsset(url: restored).assetCache?.isPlayableOffline == true)
         var request = URLRequest(url: URL(string: "http://127.0.0.1:8765" + namespace + "/disable")!)
         request.httpMethod = "POST"; request.httpBody = Data("{}".utf8)
         let (_, disabled) = try await URLSession.shared.data(for: request)
@@ -133,7 +137,7 @@ final class OfflineDownloadTests: XCTestCase {
         XCTAssertEqual((remote as? HTTPURLResponse)?.statusCode, 503)
         let player = PlaybackModel()
         defer { player.stop() }
-        player.load(local); player.play()
+        player.load(restored); player.play()
         try await waitUntil("HLS progressed with origin disabled") { player.seconds > 1 }
         XCTAssertNil(player.errorMessage)
         print("Offline native HLS progressed=\(player.seconds), playableOffline=true, originHTTP=503")
