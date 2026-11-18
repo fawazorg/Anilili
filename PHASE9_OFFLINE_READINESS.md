@@ -259,3 +259,24 @@ package path; a successful hosted HLS rerun is still required to confirm recover
 All29 local Python tests and whitespace checks pass. The new Swift regression and
 all77 required Swift/UI tests remain pending Apple execution. Automatic workflows
 remain manual-only; no required tests or Release checks were removed.
+
+
+## Sixth hosted-run recovery and CI timing
+
+Run44363804551 passed Android, Native shared tests and all existing MP4/UI journeys,
+but HLS registration still failed. The Library-only correction was insufficient;
+the prior generic catch concealed which validation or receipt-write operation
+failed. Registration now reports a fixed privacy-safe category and resolves the
+callback's absolute URL before canonicalization; its regression also covers a
+home-relative file URL. The exact remaining hosted rejection is not yet known.
+
+The Apple framework step took18m12s and the complete failed job about36minutes.
+Logs show `cache-read-only: true`, no Gradle cache restored, and repeated Native
+toolchain downloads. Manual branch runs now write Gradle caches, persist ~/.konan
+with OS/architecture/Xcode/dependency-version keys before Swift tests, and stop
+forcing Linux dependency metadata refresh on every invocation. A focused HLS
+preflight fails before the full Swift suite on this regression; success still
+requires the entire77-test suite, zero-skipped guard and both Release builds.
+Automatic triggers remain paused. All29 local Python tests, workflow shell syntax
+and whitespace checks pass. Timing improvements and HLS recovery require another
+hosted run; no time-saving estimate is claimed as measured.

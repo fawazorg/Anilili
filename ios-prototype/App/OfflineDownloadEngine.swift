@@ -449,7 +449,12 @@ extension OfflineDownloadEngine: URLSessionDownloadDelegate, AVAssetDownloadDele
                 return
             }
             do { try store.rememberHLS(location: location, key: job.key); job.stagedURL = location; jobs[assetDownloadTask.taskIdentifier] = job }
-            catch { assetDownloadTask.cancel(); failed(assetDownloadTask, kind: .storage, message: "The HLS package location was invalid.") }
+            catch {
+                // Only a fixed category is exposed: no media URLs, package names or credentials.
+                let category = (error as? OfflineDownloadStore.HLSLocationFailure)?.rawValue ?? "receiptWriteFailed"
+                assetDownloadTask.cancel()
+                failed(assetDownloadTask, kind: .storage, message: "The HLS package could not be registered (\(category)).")
+            }
         }
     }
     nonisolated func urlSession(_ session: URLSession, assetDownloadTask: AVAssetDownloadTask, didLoad timeRange: CMTimeRange,

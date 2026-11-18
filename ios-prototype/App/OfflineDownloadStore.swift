@@ -95,20 +95,27 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
         SHA256.hash(data: Data((key + "\0" + relative).utf8)).map { String(format: "%02x", $0) }.joined()
     }
     private func pointer(_ key: String) throws -> URL { try owned(key).appendingPathExtension("location") }
-    private func safeSystemPackage(_ url: URL) -> Bool {
-        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath()
-        let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
-        // AVFoundation chooses the package directory; its delegate contract does not
-        // guarantee Library. Accept only a package inside this app's canonical sandbox.
-        return url.isFileURL && resolved.path.hasPrefix(home.path + "/") &&
-            resolved.pathExtension == "movpkg" &&
-            (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
+    enum HLSLocationFailure: String, Error {
+        case notFileURL, outsideSandbox, unexpectedPackageType, symbolicLink
     }
+    private func validatedSystemPackage(_ url: URL) throws -> URL {
+        guard url.isFileURL else { throw HLSLocationFailure.notFileURL }
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath()
+        let resolved = url.absoluteURL.standardizedFileURL.resolvingSymlinksInPath()
+        guard resolved.path.hasPrefix(home.path + "/") else { throw HLSLocationFailure.outsideSandbox }
+        guard resolved.pathExtension == "movpkg" else { throw HLSLocationFailure.unexpectedPackageType }
+        guard (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true else {
+            throw HLSLocationFailure.symbolicLink
+        }
+        return resolved
+    }
+    private func safeSystemPackage(_ url: URL) -> Bool { (try? validatedSystemPackage(url)) != nil }
     func rememberHLS(location: URL, key: String) throws {
-        guard key.hasSuffix(".movpkg"), safeSystemPackage(location) else { throw Failure.invalidPath }
+        guard key.hasSuffix(".movpkg") else { throw Failure.invalidPath }
+        let package = try validatedSystemPackage(location)
         try files.createDirectory(at: root, withIntermediateDirectories: true)
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath().path + "/"
-        let canonical = location.resolvingSymlinksInPath().path
+        let canonical = package.path
         guard canonical.hasPrefix(home) else { throw Failure.invalidPath }
         let relative = String(canonical.dropFirst(home.count))
         let receipt = PackageReceipt(relative: relative, digest: binding(key, relative))

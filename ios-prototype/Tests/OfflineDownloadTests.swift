@@ -66,6 +66,10 @@ final class OfflineDownloadTests: XCTestCase {
                            package.resolvingSymlinksInPath().path)
             let restored = OfflineDownloadStore(root: storage.root)
             XCTAssertEqual(restored.hlsURL(key: key)?.path, storage.hlsURL(key: key)?.path)
+            let relative = URL(fileURLWithPath: directory + "/" + package.lastPathComponent,
+                               isDirectory: true, relativeTo: home)
+            try storage.rememberHLS(location: relative, key: key)
+            XCTAssertEqual(storage.hlsURL(key: key)?.path, package.resolvingSymlinksInPath().path)
             try restored.remove(key: key)
             XCTAssertFalse(files.fileExists(atPath: package.path))
         }
