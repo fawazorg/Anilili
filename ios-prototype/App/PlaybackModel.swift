@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 import SharedCore
+import UIKit
 
 @MainActor
 final class PlaybackModel: ObservableObject {
@@ -22,7 +23,72 @@ final class PlaybackModel: ObservableObject {
     private var pendingResumeSeconds: Double?
     private var wantsToPlay = false
     private var sourceExpiresAtMs: Int64?
+    private let lifecycleCenter: NotificationCenter
+    private let audioSession: PlaybackAudioSession
+    private let audioOwner = UUID()
+    private var lifecycleObservers: [NSObjectProtocol] = []
+    private var isForeground = true
+    private var isInterrupted = false
     var onProgressSample: ((Double, Double, Bool) -> Void)?
+
+    init(notificationCenter: NotificationCenter = .default, audioSession: PlaybackAudioSession? = nil) {
+        lifecycleCenter = notificationCenter
+        self.audioSession = audioSession ?? SystemPlaybackAudioSession.shared
+        isForeground = UIApplication.shared.applicationState != .background
+        observeLifecycle()
+    }
+
+    private func observeLifecycle() {
+        lifecycleObservers = [
+            lifecycleCenter.addObserver(forName: AVAudioSession.interruptionNotification, object: nil, queue: .main) { [weak self] event in
+                let raw = (event.userInfo?[AVAudioSessionInterruptionTypeKey] as? NSNumber)?.uintValue
+                Task { @MainActor [weak self] in
+                    guard let self, let raw, let kind = AVAudioSession.InterruptionType(rawValue: raw) else { return }
+                    if kind == .began {
+                        self.isInterrupted = true
+                        if self.player.currentItem != nil {
+                            self.pause()
+                            LocalDiagnostics.shared.record(category: .interruption, event: .interrupted)
+                        }
+                    } else {
+                        self.isInterrupted = false
+                        // Playback never resumes merely because another app finished interrupting.
+                        LocalDiagnostics.shared.record(category: .interruption, event: .interruptionEnded)
+                    }
+                }
+            },
+            lifecycleCenter.addObserver(forName: AVAudioSession.routeChangeNotification, object: nil, queue: .main) { [weak self] event in
+                let raw = (event.userInfo?[AVAudioSessionRouteChangeReasonKey] as? NSNumber)?.uintValue
+                Task { @MainActor [weak self] in
+                    guard let self, raw == AVAudioSession.RouteChangeReason.oldDeviceUnavailable.rawValue,
+                          self.player.currentItem != nil else { return }
+                    self.pause()
+                    LocalDiagnostics.shared.record(category: .interruption, event: .routeChanged, code: Int(raw ?? 0))
+                }
+            },
+            lifecycleCenter.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.isForeground = false
+                    self.pause()
+                    LocalDiagnostics.shared.record(category: .lifecycle, event: .backgrounded)
+                }
+            },
+            lifecycleCenter.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.isForeground = true
+                    LocalDiagnostics.shared.record(category: .lifecycle, event: .foregrounded)
+                }
+            },
+            lifecycleCenter.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.player.currentItem != nil else { return }
+                    LocalDiagnostics.shared.record(category: .lifecycle, event: .memoryWarning)
+                    self.stop()
+                }
+            }
+        ]
+    }
 
     /// Uses documented AVFoundation options only; unsupported provider requirements fail before fetching.
     @discardableResult
@@ -95,7 +161,7 @@ final class PlaybackModel: ObservableObject {
                     guard let self, self.generation == token else { return }
                     if item.status == .failed {
                         let error = item.error as NSError?
-                        self.fail("Media load failed: \(error?.domain ?? "unknown") code \(error?.code ?? 0).")
+                        self.fail("Media load failed: \(error?.domain ?? "unknown") code \(error?.code ?? 0).", code: error?.code)
                     }
                     else if item.status == .readyToPlay {
                         if let resume = self.pendingResumeSeconds {
@@ -123,7 +189,7 @@ final class PlaybackModel: ObservableObject {
                     case .playing: self.state = "Playing"
                     case .waitingToPlayAtSpecifiedRate: self.state = "Buffering"
                     case .paused:
-                        self.state = "Paused"
+                        if self.state != "Ended" { self.state = "Paused" }
                         self.emitProgress(immediate: true)
                     @unknown default: self.state = "Unknown"
                     }
@@ -134,8 +200,18 @@ final class PlaybackModel: ObservableObject {
             NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == token else { return }
+                    self.wantsToPlay = false
                     self.state = "Ended"
                     self.emitProgress(immediate: true)
+                    self.audioSession.deactivate(owner: self.audioOwner)
+                }
+            },
+            NotificationCenter.default.addObserver(forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self, self.generation == token, self.wantsToPlay, self.errorMessage == nil else { return }
+                    self.state = "Buffering"
+                    self.emitProgress(immediate: true)
+                    LocalDiagnostics.shared.record(category: .playback, event: .playbackStalled)
                 }
             },
             NotificationCenter.default.addObserver(forName: AVPlayerItem.failedToPlayToEndTimeNotification, object: item, queue: .main) { [weak self] notification in
@@ -143,7 +219,7 @@ final class PlaybackModel: ObservableObject {
                 let message = "Playback failed: \(error?.domain ?? "unknown") code \(error?.code ?? 0)."
                 Task { @MainActor [weak self] in
                     guard let self, self.generation == token else { return }
-                    self.fail(message)
+                    self.fail(message, code: error?.code)
                 }
             }
         ]
@@ -170,14 +246,31 @@ final class PlaybackModel: ObservableObject {
     }
 
     func play() {
+        guard isForeground, !isInterrupted, player.currentItem != nil else {
+            wantsToPlay = false
+            return
+        }
         if let expiry = sourceExpiresAtMs, expiry <= Int64(Date().timeIntervalSince1970 * 1_000) {
             fail("The playback source expired. Resolve it again before playing.")
             return
         }
         wantsToPlay = true
-        if player.currentItem != nil && pendingResumeSeconds == nil { player.play() }
+        if pendingResumeSeconds == nil {
+            do {
+                try audioSession.activate(owner: audioOwner, superseded: { [weak self] in self?.pause() })
+                player.play()
+            } catch {
+                LocalDiagnostics.shared.record(category: .playback, event: .audioSessionFailed, code: (error as NSError).code)
+                fail("Audio output is unavailable. Reload the media and try again.")
+            }
+        }
     }
-    func pause() { wantsToPlay = false; player.pause(); emitProgress(immediate: true) }
+    func pause() {
+        wantsToPlay = false
+        player.pause()
+        emitProgress(immediate: true)
+        audioSession.deactivate(owner: audioOwner)
+    }
 
     private func emitProgress(immediate: Bool) {
         guard errorMessage == nil, pendingResumeSeconds == nil, let item = player.currentItem, item.status == .readyToPlay else { return }
@@ -200,6 +293,7 @@ final class PlaybackModel: ObservableObject {
         if let subtitleGroup { player.currentItem?.select(option, in: subtitleGroup) }
     }
     func stop() {
+        let releasedItem = player.currentItem != nil
         emitProgress(immediate: true)
         wantsToPlay = false
         sourceExpiresAtMs = nil
@@ -216,6 +310,8 @@ final class PlaybackModel: ObservableObject {
         player.currentItem?.cancelPendingSeeks()
         player.currentItem?.asset.cancelLoading()
         player.replaceCurrentItem(with: nil)
+        audioSession.deactivate(owner: audioOwner)
+        if releasedItem { LocalDiagnostics.shared.record(category: .lifecycle, event: .playerReleased) }
         audioGroup = nil
         subtitleGroup = nil
         audioOptions = []
@@ -225,5 +321,58 @@ final class PlaybackModel: ObservableObject {
         errorMessage = nil
         state = "Idle"
     }
-    private func fail(_ message: String) { player.pause(); errorMessage = message; state = "Error" }
+    private func fail(_ message: String, code: Int? = nil) {
+        wantsToPlay = false
+        player.pause()
+        audioSession.deactivate(owner: audioOwner)
+        errorMessage = message
+        state = "Error"
+        LocalDiagnostics.shared.record(category: .playback, event: .initializationFailed, code: code)
+    }
+
+    deinit {
+        loading?.cancel()
+        lifecycleObservers.forEach(lifecycleCenter.removeObserver)
+        notifications.forEach(NotificationCenter.default.removeObserver)
+        if let timeObserver { player.removeTimeObserver(timeObserver) }
+        player.pause()
+        player.currentItem?.cancelPendingSeeks()
+        player.currentItem?.asset.cancelLoading()
+        player.replaceCurrentItem(with: nil)
+        let session = audioSession
+        let owner = audioOwner
+        Task { @MainActor in session.deactivate(owner: owner) }
+    }
+}
+
+@MainActor
+protocol PlaybackAudioSession: AnyObject {
+    func activate(owner: UUID, superseded: @escaping () -> Void) throws
+    func deactivate(owner: UUID)
+}
+
+/// Only the current player owns audio-session activation; idle players cannot silence another.
+@MainActor
+final class SystemPlaybackAudioSession: PlaybackAudioSession {
+    static let shared = SystemPlaybackAudioSession()
+    private var activeOwner: UUID?
+    private var supersede: (() -> Void)?
+
+    func activate(owner: UUID, superseded: @escaping () -> Void) throws {
+        guard activeOwner != owner else { return }
+        supersede?()
+        let audio = AVAudioSession.sharedInstance()
+        try audio.setCategory(.playback, mode: .moviePlayback)
+        try audio.setActive(true)
+        activeOwner = owner
+        supersede = superseded
+    }
+
+    func deactivate(owner: UUID) {
+        guard activeOwner == owner else { return }
+        activeOwner = nil
+        supersede = nil
+        do { try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+        catch { LocalDiagnostics.shared.record(category: .playback, event: .audioSessionFailed, code: (error as NSError).code) }
+    }
 }

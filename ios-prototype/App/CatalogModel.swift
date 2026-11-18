@@ -36,6 +36,8 @@ final class URLSessionCatalogTransport: NSObject, CatalogCallbackTransport {
         message.timeoutInterval = 30
         let task = session.dataTask(with: message) { data, response, error in
             if let error = error as NSError? {
+                LocalDiagnostics.shared.record(category: .network,
+                    event: error.code == NSURLErrorTimedOut ? .timedOut : .resolutionFailed, code: error.code)
                 completion.complete(response: nil, error: "Network error \(error.domain) (\(error.code)).")
                 return
             }
@@ -43,6 +45,9 @@ final class URLSessionCatalogTransport: NSObject, CatalogCallbackTransport {
                   let data, let body = String(data: data, encoding: .utf8) else {
                 completion.complete(response: nil, error: "The provider returned an invalid HTTP response.")
                 return
+            }
+            if http.statusCode >= 400 {
+                LocalDiagnostics.shared.record(category: .network, event: .resolutionFailed, code: http.statusCode)
             }
             let headers = http.allHeaderFields.reduce(into: [String: String]()) { result, pair in
                 if let name = pair.key as? String { result[name] = String(describing: pair.value) }
@@ -145,6 +150,7 @@ final class CatalogModel: ObservableObject {
                 guard let self, self.generation == token else { return }
                 self.isLoading = false
                 self.errorMessage = failure?.message
+                if let failure { LocalDiagnostics.shared.record(category: .resolution, event: .catalogFailed, code: Int(failure.status)) }
                 self.items = page?.items ?? []
                 self.request = nil
             }
@@ -184,6 +190,7 @@ final class CatalogDetailsModel: ObservableObject {
                 self.isLoading = false
                 self.media = media
                 self.errorMessage = failure?.message
+                if let failure { LocalDiagnostics.shared.record(category: .resolution, event: .catalogFailed, code: Int(failure.status)) }
                 self.request = nil
             }
         })

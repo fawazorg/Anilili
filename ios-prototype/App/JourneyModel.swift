@@ -2,6 +2,7 @@ import AVFoundation
 import Combine
 import Foundation
 import SharedCore
+import UIKit
 
 /// Owns one connected journey. Kotlin owns catalog/episode parsing and source resolution.
 @MainActor
@@ -25,7 +26,7 @@ final class JourneyModel: ObservableObject {
     @Published private(set) var resolutionError: String?
     @Published private(set) var selectedEpisode: Episode?
     @Published private(set) var resumeFromSeconds = 0.0
-    let playback = PlaybackModel()
+    let playback: PlaybackModel
     let history: WatchHistoryModel
     let catalogModel: CatalogModel
     let detailsModel: CatalogDetailsModel
@@ -40,10 +41,15 @@ final class JourneyModel: ObservableObject {
     private var resumeCatalog = false
     private var resumeDetails = false
     private var continueEpisodeID: String?
+    private var isBackgrounded = false
+    private let notificationCenter: NotificationCenter
+    private var lifecycleObservers: [NSObjectProtocol] = []
 
     init(transport: CatalogCallbackTransport = DemoJourneyTransport(),
          sourceURL: @escaping (String) -> URL? = JourneyModel.fixtureURL,
-         history: WatchHistoryModel? = nil) {
+         history: WatchHistoryModel? = nil, notificationCenter: NotificationCenter = .default) {
+        self.notificationCenter = notificationCenter
+        playback = PlaybackModel(notificationCenter: notificationCenter)
         let catalog = CatalogClient(transport: transport, endpoint: "demo://catalog")
         catalogModel = CatalogModel(client: catalog)
         detailsModel = CatalogDetailsModel(client: catalog)
@@ -51,6 +57,22 @@ final class JourneyModel: ObservableObject {
         self.sourceURL = sourceURL
         let history = history ?? WatchHistoryModel()
         self.history = history
+        lifecycleObservers = [
+            notificationCenter.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.background() }
+            },
+            notificationCenter.addObserver(forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.foreground() }
+            },
+            notificationCenter.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    self.cancelResolution()
+                    if self.isLoadingEpisodes { self.cancelDetails(); self.episodesError = "Loading was interrupted. Please retry." }
+                    self.returnToEpisodes()
+                }
+            }
+        ]
         playback.onProgressSample = { [weak history] position, duration, immediate in
             history?.sample(positionSeconds: position, durationSeconds: duration, immediate: immediate)
         }
@@ -133,6 +155,7 @@ final class JourneyModel: ObservableObject {
                     self.resolutionRequest = nil
                     guard let source, failure == nil else {
                         self.resolutionError = failure?.message ?? "No playable source is available."
+                        LocalDiagnostics.shared.record(category: .resolution, event: failure?.kind == .timeout ? .timedOut : .resolutionFailed, code: failure.map { Int($0.status) })
                         return
                     }
                     guard let url = self.sourceURL(source.url) else {
@@ -187,6 +210,8 @@ final class JourneyModel: ObservableObject {
     }
 
     func background() {
+        guard !isBackgrounded else { return }
+        isBackgrounded = true
         resumeCatalog = catalogModel.isLoading
         resumeDetails = detailsModel.isLoading || isLoadingEpisodes
         cancelResolution()
@@ -196,6 +221,7 @@ final class JourneyModel: ObservableObject {
     }
 
     func foreground() {
+        isBackgrounded = false
         if resumeCatalog { loadCatalog() }
         if resumeDetails, let animeID, !path.isEmpty { loadDetailsAndEpisodes(animeID) }
         resumeCatalog = false
@@ -211,6 +237,7 @@ final class JourneyModel: ObservableObject {
         resumeCatalog = false
         resumeDetails = false
         hasLoadedCatalog = false
+        isBackgrounded = false
     }
 
     private func cancelDetails() {
@@ -224,6 +251,7 @@ final class JourneyModel: ObservableObject {
     }
 
     deinit {
+        lifecycleObservers.forEach(notificationCenter.removeObserver)
         episodeRequest?.cancel()
         resolutionRequest?.cancel()
         episodeClient.close()

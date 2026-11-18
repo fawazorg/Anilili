@@ -18,18 +18,21 @@ class SimulatorResultsTests(unittest.TestCase):
         (directory / "WatchHistoryTests.swift").write_text("func testPersistence() {}")
         (ui / "WatchHistoryUITests.swift").write_text("func testResumeAfterRestart() {}")
         (directory / "ProviderCompatibilityTests.swift").write_text("func testProviderPlayback() {}")
+        (directory / "LifecycleTests.swift").write_text("func testLifecycle() {}")
+        (directory / "DiagnosticsTests.swift").write_text("func testRedaction() {}")
+        (ui / "AccessibilityUITests.swift").write_text("func testAccessibleNavigation() {}")
         return directory
 
     def test_requires_all_suites_and_rejects_skipped_failed_or_missing_tests(self):
         with tempfile.TemporaryDirectory() as temp:
             directory = self.make_suites(Path(temp))
-            summary = dict(totalTestCount=8, passedTests=8, failedTests=0, skippedTests=0)
-            self.assertEqual(verify(summary, directory), 8)
+            summary = dict(totalTestCount=11, passedTests=11, failedTests=0, skippedTests=0)
+            self.assertEqual(verify(summary, directory), 11)
             for overrides in [dict(totalTestCount=1, passedTests=1),
-                              dict(passedTests=7, failedTests=1),
-                              dict(passedTests=7, skippedTests=1),
+                              dict(passedTests=10, failedTests=1),
+                              dict(passedTests=10, skippedTests=1),
                               dict(totalTestCount=0, passedTests=0),
-                              dict(totalTestCount=9, passedTests=9)]:
+                              dict(totalTestCount=12, passedTests=12)]:
                 with self.subTest(overrides=overrides):
                     with self.assertRaises(ValueError):
                         verify(summary | overrides, directory)
@@ -39,7 +42,7 @@ class SimulatorResultsTests(unittest.TestCase):
             directory = self.make_suites(Path(temp))
             journey = directory / "JourneyTests.swift"
             journey.unlink()
-            summary = dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0)
+            summary = dict(totalTestCount=10, passedTests=10, failedTests=0, skippedTests=0)
             with self.assertRaises(ValueError):
                 verify(summary, directory)
             journey.write_text("// No executed journey tests")
@@ -51,7 +54,7 @@ class SimulatorResultsTests(unittest.TestCase):
             directory = self.make_suites(Path(temp))
             journey = Path(temp) / "UITests" / "JourneyUITests.swift"
             journey.unlink()
-            summary = dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0)
+            summary = dict(totalTestCount=10, passedTests=10, failedTests=0, skippedTests=0)
             with self.assertRaises(ValueError):
                 verify(summary, directory)
             journey.write_text("// No executed UI journey tests")
@@ -59,13 +62,13 @@ class SimulatorResultsTests(unittest.TestCase):
                 verify(summary, directory)
 
     def test_history_and_resume_suites_are_required(self):
-        for relative in ["Tests/WatchHistoryTests.swift", "UITests/WatchHistoryUITests.swift", "Tests/ProviderCompatibilityTests.swift"]:
+        for relative in ["Tests/LifecycleTests.swift", "Tests/DiagnosticsTests.swift", "UITests/AccessibilityUITests.swift", "Tests/WatchHistoryTests.swift", "UITests/WatchHistoryUITests.swift", "Tests/ProviderCompatibilityTests.swift"]:
             with tempfile.TemporaryDirectory() as temp:
                 root = Path(temp)
                 directory = self.make_suites(root)
                 required = root / relative
                 required.unlink()
-                summary = dict(totalTestCount=7, passedTests=7, failedTests=0, skippedTests=0)
+                summary = dict(totalTestCount=10, passedTests=10, failedTests=0, skippedTests=0)
                 with self.assertRaises(ValueError):
                     verify(summary, directory)
                 required.write_text("// Required history tests missing")
