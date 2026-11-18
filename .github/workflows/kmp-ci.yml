@@ -23,7 +23,7 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
     - name: Shared JVM tests, Android unit tests and both debug flavors
       run: ./gradlew :shared-core:jvmTest :app:testMobileDebugUnitTest :app:testTvDebugUnitTest :app:assembleMobileDebug
-        :app:assembleTvDebug -x :app:syncParityCorpus --stacktrace
+        :app:assembleTvDebug -x :app:syncParityCorpus --refresh-dependencies --stacktrace
     - name: Preserve test results
       if: always()
       uses: actions/upload-artifact@v4
@@ -123,8 +123,14 @@ jobs:
           -derivedDataPath "$test_build" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
           2>&1 | tee ios-prototype/Results/test-build.log
         test_app="$test_build/Build/Products/Debug-iphonesimulator/PlaybackPOC.app"
+        # Xcode stores simulator claims in a separate xcent file, leaving the signature empty.
+        # Background URLSession services inspect the signature, so apply the expanded claims.
+        test_entitlements="$test_build/Build/Intermediates.noindex/PlaybackPOC.build/Debug-iphonesimulator/PlaybackPOC.build/PlaybackPOC.app-Simulated.xcent"
+        python3 ios-prototype/ci/verify_simulator_signing.py "$test_entitlements" org.anilili.playbackpoc
+        codesign --force --sign - --entitlements "$test_entitlements" --generate-entitlement-der \
+          --timestamp=none "$test_app"
         codesign --verify --deep --strict "$test_app"
-        codesign --display --entitlements :- "$test_app" > ios-prototype/Results/test-host-entitlements.plist
+        codesign --display --entitlements - "$test_app" > ios-prototype/Results/test-host-entitlements.plist
         python3 ios-prototype/ci/verify_simulator_signing.py \
           ios-prototype/Results/test-host-entitlements.plist org.anilili.playbackpoc
         xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \

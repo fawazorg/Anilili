@@ -182,3 +182,23 @@ playback assertion, suite, required check or skip guard was removed. Simulator
 re-execution is pending; these fixes are not a claim that offline playback passed.
 New recovery files: App/Simulator.entitlements, ci/verify_simulator_signing.py and
 ci/test_simulator_signing.py. Both workflows remain manual-only.
+
+
+## Second hosted-run recovery
+
+[Run44312895790](https://github.com/fawazorg/Anilili/actions/runs/44312895790)
+stopped before simulator tests: codesign verification succeeded, but the identity
+guard rejected an empty signature entitlement dictionary. The build log shows the
+correct application identifier and debug claim in PlaybackPOC.app-Simulated.xcent,
+while PlaybackPOC.app.xcent was empty. CI now explicitly applies the generated,
+expanded simulator claims to the existing ad-hoc app signature, verifies the
+signature again, extracts the signed claims and runs the same strict identity
+guard. This is limited to the simulator test product; device/Release signing and
+all test assertions remain unchanged.
+
+The independent Android job failed resolving kotlin-test2.1.21 and
+kotlinx-coroutines-test1.8.1 before tests executed. Their existing Maven Central
+POMs returned HTTP200 when checked. The Linux Gradle command now refreshes dependency
+metadata rather than reusing missing-artifact results. No dependency or repository
+version was changed. The26 local Python tests and workflow syntax checks pass;
+both hosted jobs still need a successful rerun. Automatic triggers remain paused.
