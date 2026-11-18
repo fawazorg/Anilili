@@ -1,8 +1,8 @@
 # Builds both flavors and publishes them as a GitHub Release.
 #
-# Runs on every push to main and manually. The version — and with it the release tag — comes from
-# `appVersionName`/`appVersionCode` in app/build.gradle.kts, so bumping those and pushing is the
-# whole release procedure.
+# Runs manually while automatic triggers are paused. The version and release tag come from
+# `appVersionName`/`appVersionCode` in app/build.gradle.kts. Bump those values, then dispatch
+# this workflow manually to publish.
 #
 # Signing: the release keystore never lives in this repo. It is passed as the base64 secret
 # ANDROID_KEYSTORE_BASE64 (plus ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and
@@ -17,8 +17,6 @@
 name: Release
 
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
@@ -83,8 +81,8 @@ jobs:
       - name: Read version
         id: version
         run: |
-          VERSION_NAME=$(sed -n 's/^val appVersionName = "\(.*\)"$/\1/p' app/build.gradle.kts)
-          VERSION_CODE=$(sed -n 's/^val appVersionCode = \(.*\)$/\1/p' app/build.gradle.kts)
+          VERSION_NAME=$(tr -d '\r' < app/build.gradle.kts | sed -n 's/^val appVersionName = "\(.*\)"$/\1/p')
+          VERSION_CODE=$(tr -d '\r' < app/build.gradle.kts | sed -n 's/^val appVersionCode = \([0-9][0-9]*\)$/\1/p')
           if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
             echo "Could not read appVersionName/appVersionCode from app/build.gradle.kts" >&2
             exit 1

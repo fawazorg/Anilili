@@ -1,7 +1,6 @@
 name: Anilili CI
 on:
   workflow_dispatch:
-  pull_request:
 permissions:
   contents: read
 concurrency:

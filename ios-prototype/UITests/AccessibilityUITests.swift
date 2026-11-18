@@ -48,7 +48,15 @@ final class AccessibilityUITests: XCTestCase {
         _ = element.waitForExistence(timeout: 5)
         for _ in 0..<12 {
             if element.exists && element.isHittable { break }
-            app.swipeUp()
+            let playback = app.scrollViews["journey.playback"]
+            let container = playback.exists ? playback : (app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app)
+            // Large swipes can jump from below the tab bar to above the navigation bar.
+            // Follow the target's current position and use a short drag at the content edge,
+            // outside AVPlayer's own gesture surface.
+            let moveDown = element.exists && element.frame.midY < container.frame.midY
+            let start = container.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: moveDown ? 0.35 : 0.65))
+            let end = container.coordinate(withNormalizedOffset: CGVector(dx: 0.98, dy: moveDown ? 0.65 : 0.35))
+            start.press(forDuration: 0.05, thenDragTo: end)
         }
         XCTAssertTrue(element.exists, file: file, line: line)
         XCTAssertTrue(element.isHittable, file: file, line: line)
