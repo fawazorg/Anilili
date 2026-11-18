@@ -98,8 +98,9 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
     private func safeSystemPackage(_ url: URL) -> Bool {
         let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true).resolvingSymlinksInPath()
         let resolved = url.standardizedFileURL.resolvingSymlinksInPath()
-        // AVFoundation owns packages beneath Library; never accept arbitrary external files.
-        return url.isFileURL && resolved.path.hasPrefix(home.appendingPathComponent("Library").path + "/") &&
+        // AVFoundation chooses the package directory; its delegate contract does not
+        // guarantee Library. Accept only a package inside this app's canonical sandbox.
+        return url.isFileURL && resolved.path.hasPrefix(home.path + "/") &&
             resolved.pathExtension == "movpkg" &&
             (try? url.resourceValues(forKeys: [.isSymbolicLinkKey]).isSymbolicLink) != true
     }

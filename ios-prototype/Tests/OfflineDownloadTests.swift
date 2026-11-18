@@ -49,6 +49,41 @@ final class OfflineDownloadTests: XCTestCase {
         }
     }
 
+    func testHLSReceiptsAcceptSystemSelectedSandboxDirectoriesAndRejectUnsafeLocations() throws {
+        let storage = store()
+        let files = FileManager.default
+        let home = URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
+        for directory in ["Library", "Documents"] {
+            let package = home.appendingPathComponent(directory, isDirectory: true)
+                .appendingPathComponent(UUID().uuidString + ".movpkg", isDirectory: true)
+            let key = UUID().uuidString + ".movpkg"
+            // willDownloadTo can arrive before the package exists on disk.
+            try storage.rememberHLS(location: package, key: key)
+            XCTAssertNil(storage.hlsURL(key: key))
+            try files.createDirectory(at: package, withIntermediateDirectories: true)
+            defer { try? files.removeItem(at: package) }
+            XCTAssertEqual(storage.hlsURL(key: key)?.resolvingSymlinksInPath().path,
+                           package.resolvingSymlinksInPath().path)
+            let restored = OfflineDownloadStore(root: storage.root)
+            XCTAssertEqual(restored.hlsURL(key: key)?.path, storage.hlsURL(key: key)?.path)
+            try restored.remove(key: key)
+            XCTAssertFalse(files.fileExists(atPath: package.path))
+        }
+        for invalid in [home, home.appendingPathComponent("Library"),
+                        URL(fileURLWithPath: "/outside.movpkg"), URL(string: "https://example.invalid/media.movpkg")!] {
+            XCTAssertThrowsError(try storage.rememberHLS(location: invalid, key: UUID().uuidString + ".movpkg"))
+        }
+        let target = home.appendingPathComponent("Documents", isDirectory: true)
+            .appendingPathComponent(UUID().uuidString + ".movpkg", isDirectory: true)
+        let link = target.deletingLastPathComponent().appendingPathComponent(UUID().uuidString + ".movpkg")
+        try files.createDirectory(at: target, withIntermediateDirectories: true)
+        defer { try? files.removeItem(at: target); try? files.removeItem(at: link) }
+        try files.createSymbolicLink(at: link, withDestinationURL: target)
+        XCTAssertThrowsError(try storage.rememberHLS(location: link, key: UUID().uuidString + ".movpkg"))
+        XCTAssertThrowsError(try storage.rememberHLS(location: target, key: "../escape.movpkg"))
+        XCTAssertTrue(files.fileExists(atPath: target.path))
+    }
+
     func testMP4CompletesWithoutDuplicateAndSurvivesRepositoryRecreation() async throws {
         let storage = store()
         let first = engine(storage)

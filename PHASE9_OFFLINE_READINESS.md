@@ -89,8 +89,8 @@ has passed. Native background behavior follows the
 | Python fixture and CI guards | PASS | 29 tests, including actual scoped cookie/UA enforcement, Range validators, truncation and per-test origin shutdown. |
 | Static CI/project validation | PASS | Manual-only triggers, workflow shell/Python syntax, plist/scheme parsing, 83 Xcode object references and whitespace checks. |
 | Native common tests / Swift compilation | PASS on first hosted run | 115 Native tests passed; Swift test binaries compiled. |
-| Swift simulator tests | FAIL on first hosted run; rerun pending | Run44304079169 executed75 tests. Offline storage/completion and background-session cases failed; existing UI suites passed. Recovery patch now requires76 tests, adding a directory-URL regression. |
-| Real MP4/HLS native downloads and offline playback | NOT TESTED | Implemented with mandatory deterministic integration tests; no simulator or device execution in this phase yet. HLS readiness remains PARTIAL. |
+| Swift simulator tests | FAIL on latest hosted run | Run44339552581 executed73 unit/integration tests and3 UI tests. The sole failing test was native HLS package registration (two assertions). The correction adds one regression case, requiring77 tests on rerun. |
+| Real MP4/HLS native downloads and offline playback | PARTIAL | MP4 download, origin-disabled playback, persistent resume and local-to-online fallback passed in run44339552581. HLS failed package-location validation before offline playback. Physical devices remain NOT TESTED. |
 | Unsigned Release simulator/device builds | NOT TESTED | Existing mandatory CI steps preserved. |
 | Hosted Phase9 workflow | FAIL (historical); recovery rerun pending | Run44304079169: Android passed, Apple failed in offline tests. Verify the recovery commit before claiming success. |
 | Physical Android/TV/iPhone, live providers and background relaunch | NOT TESTED | Build/test success on Linux is not runtime or hardware evidence. |
@@ -108,7 +108,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ios-prototype/ci -p 't
 checkouts; no generated or user data was deleted. Expected Apple targets are
 disabled on Linux. Existing Kotlin/Android deprecation warnings remain.
 
-The ten `OfflineDownloadTests` require real MP4 transfer, real HLS package download
+The eleven `OfflineDownloadTests` require real MP4 transfer, real HLS package download
 and origin-disabled playback, pause/resume/cancel, low-space/HTTP failure,
 truncation/invalid media, same-size corruption, safe cleanup, metadata preservation,
 expiration and changed-cookie rejection. Two `OfflineJourneyTests` require MP4
@@ -235,3 +235,27 @@ All 29 local Python tests pass; workflow shell syntax and manual-only triggers
 also pass inspection. All required simulator suites, playback assertions and
 Release builds remain mandatory. Hosted validation of this correction is pending;
 physical-device signing and playback remain NOT TESTED.
+
+
+## Fifth hosted-run recovery
+
+[Run44339552581](https://github.com/fawazorg/Anilili/actions/runs/44339552581)
+passed Android, shared iOS tests, simulator signature/identity/launch checks,
+MP4 download and offline-resume journeys, and all three UI tests. The remaining
+failure is `testHLSNativePackagePlaysAfterItsOriginIsDisabled`: its download state
+became FAILED with `The HLS package location was invalid`, followed by the expected
+missing-local-URL assertion. Release steps were consequently not executed.
+
+The receipt validator imposed an undocumented Library-only location restriction.
+Apple's delegate contract supplies the system-selected package URL and requires
+keeping it there; it does not guarantee that directory. Receipt registration now
+accepts native `.movpkg` locations within this app's canonical sandbox, retaining
+symlink rejection, package suffix checks, UUID keys, bound relative receipts and
+outside-sandbox rejection. Packages are never moved. A new Swift regression checks
+Library/Documents locations, pre-creation registration, repository recreation,
+receipt-based deletion and unsafe inputs. The logs do not expose the rejected
+package path; a successful hosted HLS rerun is still required to confirm recovery.
+
+All29 local Python tests and whitespace checks pass. The new Swift regression and
+all77 required Swift/UI tests remain pending Apple execution. Automatic workflows
+remain manual-only; no required tests or Release checks were removed.
