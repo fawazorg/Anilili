@@ -33,13 +33,30 @@ final class OfflineDownloadTests: XCTestCase {
                         source: source ?? self.source(), episodeNumber: 1)
     }
 
+    func testOwnedFileMoveAcceptsEquivalentDirectoryURLRepresentations() throws {
+        for directoryHint in [false, true] {
+            let path = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+            let storage = OfflineDownloadStore(root: URL(fileURLWithPath: path, isDirectory: directoryHint))
+            let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            try Data("original local test bytes".utf8).write(to: temporary)
+            let key = UUID().uuidString + ".mp4"
+            let destination = try storage.installProgressive(temporary: temporary, key: key)
+            XCTAssertEqual(destination.deletingLastPathComponent().path, storage.root.path)
+            XCTAssertEqual(try Data(contentsOf: destination), Data("original local test bytes".utf8))
+            try storage.remove(key: key)
+            XCTAssertFalse(FileManager.default.fileExists(atPath: destination.path))
+            XCTAssertThrowsError(try storage.installProgressive(temporary: temporary, key: "../other.mp4"))
+        }
+    }
+
     func testMP4CompletesWithoutDuplicateAndSurvivesRepositoryRecreation() async throws {
         let storage = store()
         let first = engine(storage)
         defer { first.shutdown() }
         XCTAssertTrue(download(first))
         XCTAssertFalse(download(first))
-        try await waitUntil("progressive completed") { first.records.first?.state == .completed }
+        try await waitUntil("progressive completed") { first.records.first?.state == .completed || first.records.first?.state == .failed }
+        XCTAssertEqual(first.records.first?.state, .completed, first.errorMessage ?? "Download did not complete")
         XCTAssertEqual(first.records.count, 1)
         let local = try XCTUnwrap(first.localURL(identity: identity()))
         XCTAssertTrue(local.isFileURL)
@@ -95,7 +112,8 @@ final class OfflineDownloadTests: XCTestCase {
         XCTAssertEqual(downloads.records.first?.state, .paused)
         XCTAssertNil(downloads.localURL(identity: identity()))
         XCTAssertTrue(downloads.resume(record: try XCTUnwrap(downloads.records.first)))
-        try await waitUntil("resumed completed") { downloads.records.first?.state == .completed }
+        try await waitUntil("resumed completed") { downloads.records.first?.state == .completed || downloads.records.first?.state == .failed }
+        XCTAssertEqual(downloads.records.first?.state, .completed, downloads.errorMessage ?? "Download did not complete")
         downloads.delete(record: try XCTUnwrap(downloads.records.first))
         XCTAssertTrue(download(downloads, source: source("/provider/offline/slow.mp4")))
         try await waitUntil("new partial bytes") { (downloads.records.first?.bytesDownloaded ?? 0) > 0 }
@@ -144,7 +162,8 @@ final class OfflineDownloadTests: XCTestCase {
         let downloads = engine(storage)
         defer { downloads.shutdown() }
         XCTAssertTrue(download(downloads))
-        try await waitUntil("complete before bit corruption") { downloads.records.first?.state == .completed }
+        try await waitUntil("complete before bit corruption") { downloads.records.first?.state == .completed || downloads.records.first?.state == .failed }
+        XCTAssertEqual(downloads.records.first?.state, .completed, downloads.errorMessage ?? "Download did not complete")
         _ = try XCTUnwrap(downloads.records.first)
         let local = try XCTUnwrap(downloads.localURL(identity: identity()))
         let unrelated = storage.root.appendingPathComponent("user-owned.txt")

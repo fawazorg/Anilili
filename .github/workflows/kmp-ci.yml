@@ -116,11 +116,24 @@ jobs:
           sleep 1
         done
         curl --fail --silent http://127.0.0.1:8765/progressive.mp4 > /dev/null
-        xcodebuild test -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+        test_build="$RUNNER_TEMP/PlaybackTests"
+        xcodebuild build-for-testing -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+          -configuration Debug -sdk iphonesimulator \
           -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+          -derivedDataPath "$test_build" CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- \
+          2>&1 | tee ios-prototype/Results/test-build.log
+        test_app="$test_build/Build/Products/Debug-iphonesimulator/PlaybackPOC.app"
+        codesign --verify --deep --strict "$test_app"
+        codesign --display --entitlements :- "$test_app" > ios-prototype/Results/test-host-entitlements.plist
+        python3 ios-prototype/ci/verify_simulator_signing.py \
+          ios-prototype/Results/test-host-entitlements.plist org.anilili.playbackpoc
+        xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+          -configuration Debug -sdk iphonesimulator \
+          -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
+          -derivedDataPath "$test_build" \
           -parallel-testing-enabled NO -maximum-concurrent-test-simulator-destinations 1 \
           -resultBundlePath ios-prototype/Results/Playback.xcresult \
-          CODE_SIGNING_ALLOWED=NO 2>&1 | tee ios-prototype/Results/xcodebuild.log
+          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- 2>&1 | tee ios-prototype/Results/xcodebuild.log
         kill -0 "$fixture_pid"
         xcrun xcresulttool get test-results summary --path ios-prototype/Results/Playback.xcresult \
           > ios-prototype/Results/test-summary.json

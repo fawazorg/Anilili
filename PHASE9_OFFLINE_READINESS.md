@@ -86,12 +86,13 @@ has passed. Native background behavior follows the
 | Android mobile unit tests | PASS | 2,583 total; 2,578 passed, five existing optional live probes skipped. |
 | Android TV unit tests | PASS | Same counts; no failures/errors. Skipped probes are NOT TESTED. |
 | Mobile/TV debug builds | PASS | Both assemble tasks succeeded; Android production source/UI/storage untouched. |
-| Python fixture and CI guards | PASS | 24 tests, including actual scoped cookie/UA enforcement, Range validators, truncation and per-test origin shutdown. |
+| Python fixture and CI guards | PASS | 26 tests, including actual scoped cookie/UA enforcement, Range validators, truncation and per-test origin shutdown. |
 | Static CI/project validation | PASS | Manual-only triggers, workflow shell/Python syntax, plist/scheme parsing, 83 Xcode object references and whitespace checks. |
-| Swift/Native compilation and 75 simulator tests | NOT TESTED | Linux lacks Xcode. Existing tests retained; eleven new native offline tests registered and required. |
+| Native common tests / Swift compilation | PASS on first hosted run | 115 Native tests passed; Swift test binaries compiled. |
+| Swift simulator tests | FAIL on first hosted run; rerun pending | Run44304079169 executed75 tests. Offline storage/completion and background-session cases failed; existing UI suites passed. Recovery patch now requires76 tests, adding a directory-URL regression. |
 | Real MP4/HLS native downloads and offline playback | NOT TESTED | Implemented with mandatory deterministic integration tests; no simulator or device execution in this phase yet. HLS readiness remains PARTIAL. |
 | Unsigned Release simulator/device builds | NOT TESTED | Existing mandatory CI steps preserved. |
-| Hosted Phase9 workflow | NOT TESTED (pending run) | Publication and manual dispatch were authorized; results must be checked against the published Phase9 head. |
+| Hosted Phase9 workflow | FAIL (historical); recovery rerun pending | Run44304079169: Android passed, Apple failed in offline tests. Verify the recovery commit before claiming success. |
 | Physical Android/TV/iPhone, live providers and background relaunch | NOT TESTED | Build/test success on Linux is not runtime or hardware evidence. |
 
 Local validation used JDK17 and the existing SDK:
@@ -107,7 +108,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s ios-prototype/ci -p 't
 checkouts; no generated or user data was deleted. Expected Apple targets are
 disabled on Linux. Existing Kotlin/Android deprecation warnings remain.
 
-The nine `OfflineDownloadTests` require real MP4 transfer, real HLS package download
+The ten `OfflineDownloadTests` require real MP4 transfer, real HLS package download
 and origin-disabled playback, pause/resume/cancel, low-space/HTTP failure,
 truncation/invalid media, same-size corruption, safe cleanup, metadata preservation,
 expiration and changed-cookie rejection. Two `OfflineJourneyTests` require MP4
@@ -154,3 +155,30 @@ inspect actual MP4/HLS offline progression and Release results before claiming
 Phase9 complete. Recommended Phase10 scope only after that gate: physical-device
 background/recovery and storage-pressure validation with measured fixes. No Phase10
 implementation is included.
+
+
+## First hosted-run recovery
+
+[Run44304079169](https://github.com/fawazorg/Anilili/actions/runs/44304079169)
+confirmed successful Android builds and115 shared Native tests. MP4 origins returned
+HTTP200, while completion failed; inspection found storage comparing directory URL
+objects whose directory/trailing-slash representations can differ. Roots now have
+an explicit directory representation and containment checks compare canonical
+parent paths, preserving UUID and symlink restrictions. A focused file-move test
+covers both directory hints.
+
+HLS failed with SecTaskLoadEntitlements error22, background-service XPC4099/4097,
+and an unavailable remote AVAssetDownloadTask session. Tests had been explicitly
+unsigned. CI now builds the simulator test host with an ad-hoc signature and a
+simulator-only Debug application identity, verifies codesign and its entitlements,
+then runs tests without rebuilding. No Apple certificate/team/profile is invented;
+device signing and unsigned Release builds are unchanged. Simulator entitlement
+handling differs from physical devices, as explained by
+[Apple DTS](https://developer.apple.com/forums/thread/791736).
+
+Offline test waits now stop on a failed transfer and assert COMPLETED with the
+safe engine error, rather than cascading through later playback assertions. No
+playback assertion, suite, required check or skip guard was removed. Simulator
+re-execution is pending; these fixes are not a claim that offline playback passed.
+New recovery files: App/Simulator.entitlements, ci/verify_simulator_signing.py and
+ci/test_simulator_signing.py. Both workflows remain manual-only.

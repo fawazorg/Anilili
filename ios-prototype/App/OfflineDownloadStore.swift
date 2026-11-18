@@ -9,7 +9,7 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
     private let files = FileManager.default
 
     init(root: URL = OfflineDownloadStore.applicationRoot()) {
-        self.root = root.standardizedFileURL.resolvingSymlinksInPath()
+        self.root = URL(fileURLWithPath: root.standardizedFileURL.resolvingSymlinksInPath().path, isDirectory: true)
         metadata = HistoryFileStorage(fileURL: self.root.appendingPathComponent("downloads.json"))
         super.init()
     }
@@ -36,8 +36,8 @@ final class OfflineDownloadStore: NSObject, DownloadStorage {
         guard key.range(of: "^[0-9A-Fa-f-]{36}\\.(mp4|movpkg)$", options: .regularExpression) != nil,
               UUID(uuidString: String(key.prefix(36))) != nil else { throw Failure.invalidPath }
         let value = root.appendingPathComponent(key).standardizedFileURL
-        guard value.deletingLastPathComponent() == root,
-              value.resolvingSymlinksInPath().deletingLastPathComponent() == root else { throw Failure.invalidPath }
+        guard value.deletingLastPathComponent().path == root.path,
+              value.resolvingSymlinksInPath().deletingLastPathComponent().path == root.path else { throw Failure.invalidPath }
         return value
     }
     func installProgressive(temporary: URL, key: String) throws -> URL {

@@ -471,6 +471,7 @@
 "isa" = "XCBuildConfiguration";
 "buildSettings" = {
 "PRODUCT_BUNDLE_IDENTIFIER" = "org.anilili.playbackpoc";
+"CODE_SIGN_ENTITLEMENTS[sdk=iphonesimulator*]" = "App/Simulator.entitlements";
 "MARKETING_VERSION" = "0.1.0";
 "CURRENT_PROJECT_VERSION" = "1";
 "OTHER_LDFLAGS" = ("$(inherited)","-framework","SharedCore");

@@ -13,6 +13,7 @@ final class OfflineJourneyTests: XCTestCase {
             try await Task.sleep(nanoseconds: 50_000_000)
         }
         XCTFail("Offline journey timed out: \(label)")
+        throw NSError(domain: "OfflineJourneyTest", code: 1)
     }
     private func downloaded() async throws -> (OfflineDownloadEngine, DownloadRecord, String) {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -25,8 +26,10 @@ final class OfflineJourneyTests: XCTestCase {
         let identity = DownloadIdentity(providerId: "demo-v1", animeId: "101", episodeId: "demo-mp4")
         XCTAssertTrue(engine.download(identity: identity, title: "Original Offline Fixture", episodeTitle: "Original Episode",
             source: source, episodeNumber: 1))
-        try await waitUntil("MP4 complete") { engine.records.first?.state == .completed }
+        try await waitUntil("MP4 complete") { engine.records.first?.state == .completed || engine.records.first?.state == .failed }
         let record = try XCTUnwrap(engine.records.first)
+        XCTAssertEqual(record.state, .completed, engine.errorMessage ?? "Download did not complete")
+        guard record.state == .completed else { throw NSError(domain: "OfflineJourneyTest", code: 2) }
         var disable = URLRequest(url: try XCTUnwrap(URL(string: prefix + "/disable")))
         disable.httpMethod = "POST"; disable.httpBody = Data("{}".utf8)
         let (_, response) = try await URLSession.shared.data(for: disable)
