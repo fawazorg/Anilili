@@ -1,11 +1,12 @@
 import Combine
 import Foundation
 import SharedCore
+import UIKit
 
 /// A known AniDB server endpoint is resolved by Kotlin; Swift owns only transport and AVPlayer.
 @MainActor
 final class ProviderPlaybackModel: ObservableObject {
-    let playback = PlaybackModel()
+    let playback: PlaybackModel
     @Published private(set) var isResolving = false
     @Published private(set) var errorMessage: String?
     @Published private(set) var resolvedFormat: String?
@@ -14,8 +15,21 @@ final class ProviderPlaybackModel: ObservableObject {
     private var generation = UUID()
     private var lastEndpoint: String?
 
-    init(transport: CatalogCallbackTransport = URLSessionCatalogTransport()) {
+    private let notificationCenter: NotificationCenter
+    private var lifecycleObservers: [NSObjectProtocol] = []
+
+    init(transport: CatalogCallbackTransport = URLSessionCatalogTransport(), notificationCenter: NotificationCenter = .default) {
+        self.notificationCenter = notificationCenter
+        playback = PlaybackModel(notificationCenter: notificationCenter)
         resolver = AniDbSourceClient(transport: transport)
+        lifecycleObservers = [
+            notificationCenter.addObserver(forName: UIApplication.didEnterBackgroundNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.background() }
+            },
+            notificationCenter.addObserver(forName: UIApplication.didReceiveMemoryWarningNotification, object: nil, queue: .main) { [weak self] _ in
+                Task { @MainActor [weak self] in self?.stop() }
+            }
+        ]
     }
 
     func resolveAndPlay(endpoint: String) {
@@ -36,6 +50,7 @@ final class ProviderPlaybackModel: ObservableObject {
                     self.isResolving = false
                     guard let source, failure == nil else {
                         self.errorMessage = failure?.message ?? "The provider returned no playable media."
+                        LocalDiagnostics.shared.record(category: .resolution, event: failure?.kind == .timeout ? .timedOut : .resolutionFailed, code: failure.map { Int($0.status) })
                         return
                     }
                     guard self.playback.load(source: source) else {
@@ -61,7 +76,7 @@ final class ProviderPlaybackModel: ObservableObject {
 
     func background() { cancel(); playback.pause() }
     func stop() { cancel(); playback.stop() }
-    deinit { request?.cancel(); resolver.close() }
+    deinit { lifecycleObservers.forEach(notificationCenter.removeObserver); request?.cancel(); resolver.close() }
 }
 
 private final class ProviderSourceCompletion: NSObject, EpisodeSourceCompletion {

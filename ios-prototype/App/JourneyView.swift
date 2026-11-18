@@ -40,7 +40,9 @@ private struct JourneyCatalogScreen: View {
                 TextField("Search demo titles", text: $catalog.query)
                     .textFieldStyle(.roundedBorder).submitLabel(.search)
                     .onSubmit { journey.loadCatalog() }.accessibilityIdentifier("journey.search")
-                Button("Search") { journey.loadCatalog() }
+                    .accessibilityLabel("Search original demo anime")
+                Button { journey.loadCatalog() } label: { Text("Search").frame(minHeight: 44) }
+                    .accessibilityIdentifier("journey.search.submit")
             }.padding(.horizontal)
             if let error = history.errorMessage {
                 Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("history.error")
@@ -51,11 +53,12 @@ private struct JourneyCatalogScreen: View {
                     ForEach(history.continuing, id: \.historyRowID) { record in
                         Button { journey.continueWatching(record) } label: {
                             VStack(alignment: .leading) {
-                                Text(record.title).font(.headline)
+                                Text(record.title).font(.headline).fixedSize(horizontal: false, vertical: true)
                                 Text("\(record.episodeTitle) · \(Int(record.positionMs / 1_000)) seconds")
                                     .font(.caption)
-                            }
-                        }.accessibilityIdentifier("history.continue.\(record.identity.episodeId)")
+                            }.frame(minHeight: 44, alignment: .leading)
+                        }.accessibilityHint("Resume this episode from its saved position")
+                            .accessibilityIdentifier("history.continue.\(record.identity.episodeId)")
                     }
                 }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
             }
@@ -65,7 +68,7 @@ private struct JourneyCatalogScreen: View {
             } else if let error = catalog.errorMessage {
                 ContentUnavailableView {
                     Label("Catalog unavailable", systemImage: "exclamationmark.triangle")
-                } description: { Text(error) } actions: { Button("Retry") { journey.loadCatalog() } }
+                } description: { Text(error) } actions: { Button { journey.loadCatalog() } label: { Text("Retry").frame(minHeight: 44) } }
             } else if catalog.items.isEmpty {
                 ContentUnavailableView("No results", systemImage: "magnifyingglass", description: Text("Try another title or clear the search."))
             } else {
@@ -80,8 +83,9 @@ private struct JourneyCatalogScreen: View {
                             }
                             Spacer()
                             Image(systemName: "chevron.right").accessibilityHidden(true)
-                        }.padding(.vertical, 4)
-                    }.accessibilityIdentifier("journey.anime.\(media.id)")
+                        }.padding(.vertical, 4).frame(minHeight: 44, alignment: .leading)
+                    }.accessibilityHint("Show anime details and available episodes")
+                        .accessibilityIdentifier("journey.anime.\(media.id)")
                 }.accessibilityIdentifier("journey.catalog")
             }
         }
@@ -102,7 +106,7 @@ private struct JourneyDetailsScreen: View {
                 ProgressView("Loading anime details…")
             } else if let error = details.errorMessage {
                 Text(error).foregroundStyle(.red)
-                Button("Retry details") { journey.retryDetails() }
+                Button { journey.retryDetails() } label: { Text("Retry details").frame(minHeight: 44) }
             } else if let media = details.media {
                 Section {
                     Text(media.title.preferred).font(.title2).accessibilityAddTraits(.isHeader)
@@ -116,7 +120,7 @@ private struct JourneyDetailsScreen: View {
                     ProgressView("Loading episodes…")
                 } else if let error = journey.episodesError {
                     Text(error).foregroundStyle(.red)
-                    Button("Retry episodes") { journey.retryDetails() }
+                    Button { journey.retryDetails() } label: { Text("Retry episodes").frame(minHeight: 44) }
                 } else if journey.episodes.isEmpty {
                     Text("No episodes are available for this title.").foregroundStyle(.secondary)
                         .accessibilityIdentifier("journey.episodes.empty")
@@ -137,8 +141,9 @@ private struct JourneyDetailsScreen: View {
                                 Spacer()
                                 if journey.resolvingEpisodeID == episode.id { ProgressView() }
                                 else { Image(systemName: "play.circle").accessibilityHidden(true) }
-                            }
+                            }.frame(minHeight: 44, alignment: .leading)
                         }
+                        .accessibilityHint("Resolve this episode and begin playback")
                         .disabled(journey.resolvingEpisodeID != nil)
                         .accessibilityIdentifier("journey.episode.\(episode.id)")
                         .contextMenu {
@@ -154,7 +159,8 @@ private struct JourneyDetailsScreen: View {
                     }
                 }
                 if journey.resolvingEpisodeID != nil {
-                    Button("Cancel resolution") { journey.cancelResolution() }.accessibilityIdentifier("journey.resolve.cancel")
+                    Button { journey.cancelResolution() } label: { Text("Cancel resolution").frame(minHeight: 44) }
+                        .accessibilityIdentifier("journey.resolve.cancel")
                 }
                 if let error = journey.resolutionError {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("journey.resolve.error")
@@ -186,10 +192,10 @@ private struct JourneyPlaybackScreen: View {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("history.error")
                 }
                 if let episode = journey.selectedEpisode {
-                    Button("Mark watched") { journey.markEpisode(episode, watched: true) }
+                    Button { journey.markEpisode(episode, watched: true) } label: { Text("Mark watched").frame(minHeight: 44) }
                         .accessibilityIdentifier("history.mark-watched")
                 }
-                Button("Back to episodes") { journey.returnToEpisodes() }
+                Button { journey.returnToEpisodes() } label: { Text("Back to episodes").frame(minHeight: 44) }
                     .accessibilityIdentifier("journey.playback.back")
             }.padding()
         }

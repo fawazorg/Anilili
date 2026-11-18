@@ -13,7 +13,7 @@ struct CatalogView: View {
                         .submitLabel(.search)
                         .onSubmit { model.search() }
                         .accessibilityIdentifier("catalog.query")
-                    Button("Search") { model.search() }
+                    Button { model.search() } label: { Text("Search").frame(minHeight: 44) }
                         .accessibilityIdentifier("catalog.search")
                 }.padding(.horizontal)
                 if model.isLoading {
@@ -23,7 +23,7 @@ struct CatalogView: View {
                     ContentUnavailableView {
                         Label("Search unavailable", systemImage: "exclamationmark.triangle")
                     } description: { Text(error) } actions: {
-                        Button("Retry") { model.search() }
+                        Button { model.search() } label: { Text("Retry").frame(minHeight: 44) }
                     }.accessibilityIdentifier("catalog.error")
                 } else if model.items.isEmpty {
                     ContentUnavailableView(model.hasSearched ? "No results" : "Search AniList", systemImage: "magnifyingglass",
@@ -36,10 +36,11 @@ struct CatalogView: View {
                                 CatalogCover(address: media.coverImage.best)
                                 VStack(alignment: .leading, spacing: 5) {
                                     Text(media.title.preferred).font(.headline)
+                                        .fixedSize(horizontal: false, vertical: true)
                                     if let format = media.format { Text(format).font(.subheadline) }
                                     if let year = media.seasonYear { Text("\(year.intValue)").font(.caption) }
                                 }
-                            }
+                            }.frame(minHeight: 44, alignment: .leading)
                         }
                     }.accessibilityIdentifier("catalog.results")
                 }
@@ -55,10 +56,13 @@ struct CatalogView: View {
 private struct CatalogCover: View {
     let address: String?
     var body: some View {
-        AsyncImage(url: address.flatMap(URL.init(string:))) { image in
-            image.resizable().scaledToFit()
-        } placeholder: {
-            Image(systemName: "photo").foregroundStyle(.secondary)
+        AsyncImage(url: address.flatMap(URL.init(string:))) { phase in
+            if let image = phase.image {
+                image.resizable().scaledToFit()
+            } else {
+                // Missing artwork and failed downloads have the same stable decorative fallback.
+                Image(systemName: "photo").foregroundStyle(.secondary)
+            }
         }.frame(width: 64, height: 90).accessibilityHidden(true)
     }
 }
@@ -80,12 +84,13 @@ struct CatalogDetailsView: View {
                 ContentUnavailableView {
                     Label("Details unavailable", systemImage: "exclamationmark.triangle")
                 } description: { Text(error) } actions: {
-                    Button("Retry") { model.load(id: id) }
+                    Button { model.load(id: id) } label: { Text("Retry").frame(minHeight: 44) }
                 }
             } else if let media = model.media {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 12) {
                         Text(media.title.preferred).font(.title).accessibilityAddTraits(.isHeader)
+                            .fixedSize(horizontal: false, vertical: true)
                         CatalogCover(address: media.coverImage.best)
                         if let format = media.format { Text("Format: \(format)") }
                         if let status = media.status { Text("Status: \(status)") }

@@ -31,10 +31,12 @@ final class WatchHistoryModel: ObservableObject {
     func refresh() {
         let all = repository.snapshot()
         errorMessage = all.error
+        if all.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageReadFailed) }
         records = all.records
         let recent = repository.continueWatching()
         continuing = recent.records.filter { $0.identity.providerId == "demo-v1" && Int32($0.identity.animeId) != nil }
         if errorMessage == nil { errorMessage = recent.error }
+        if recent.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageReadFailed) }
     }
 
     func record(for episode: Episode) -> WatchProgress? {
@@ -46,6 +48,7 @@ final class WatchHistoryModel: ObservableObject {
         let result = repository.beginSession(identity: identity(episode), title: animeTitle,
             episodeTitle: episode.title, nowMs: now())
         errorMessage = result.error
+        if result.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageWriteFailed) }
         session = result.session
         sequence = 0
         lastSavedAt = now()
@@ -62,7 +65,11 @@ final class WatchHistoryModel: ObservableObject {
         sequence += 1
         let result = repository.update(session: session, positionMs: positionSeconds * 1_000,
             durationMs: durationSeconds * 1_000, nowMs: instant, sequence: sequence)
-        if let error = result.error { errorMessage = error; return }
+        if let error = result.error {
+            errorMessage = error
+            LocalDiagnostics.shared.record(category: .persistence, event: .storageWriteFailed)
+            return
+        }
         if result.accepted { lastSavedAt = instant }
         refresh()
     }
@@ -73,6 +80,7 @@ final class WatchHistoryModel: ObservableObject {
         let result = repository.mark(identity: identity(episode), title: animeTitle,
             episodeTitle: episode.title, watched: watched, nowMs: now())
         errorMessage = result.error
+        if result.error != nil { LocalDiagnostics.shared.record(category: .persistence, event: .storageWriteFailed) }
         if result.error == nil { refresh() }
     }
 

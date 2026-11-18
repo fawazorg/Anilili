@@ -35,7 +35,7 @@ jobs:
           app/build/reports/tests/
   apple:
     runs-on: macos-15-intel
-    timeout-minutes: 45
+    timeout-minutes: 60
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -126,6 +126,35 @@ jobs:
         xcrun xcresulttool get test-results summary --path ios-prototype/Results/Playback.xcresult \
           > ios-prototype/Results/test-summary.json
         python3 ios-prototype/ci/verify_results.py ios-prototype/Results/test-summary.json
+    - name: Link Release frameworks for simulator and physical iPhone
+      run: ./gradlew :shared-core:linkReleaseFrameworkIosX64 :shared-core:linkReleaseFrameworkIosArm64 --stacktrace
+    - name: Validate unsigned Release simulator and device builds
+      shell: bash
+      run: |
+        set -euo pipefail
+        for platform in Simulator Device; do
+          if [[ "$platform" == Simulator ]]; then
+            sdk=iphonesimulator
+            destination='generic/platform=iOS Simulator'
+          else
+            sdk=iphoneos
+            destination='generic/platform=iOS'
+          fi
+          build_directory="$RUNNER_TEMP/PlaybackRelease$platform"
+          xcodebuild build -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
+            -configuration Release -sdk "$sdk" -destination "$destination" \
+            -derivedDataPath "$build_directory" CODE_SIGNING_ALLOWED=NO \
+            2>&1 | tee "ios-prototype/Results/release-$platform.log"
+          xcodebuild -showBuildSettings -json -project ios-prototype/PlaybackPOC.xcodeproj \
+            -scheme PlaybackPOC -configuration Release -sdk "$sdk" -destination "$destination" \
+            CODE_SIGNING_ALLOWED=NO > "ios-prototype/Results/release-$platform-settings.json"
+          python3 ios-prototype/ci/verify_release_settings.py \
+            "ios-prototype/Results/release-$platform-settings.json" "$sdk"
+          app="$build_directory/Build/Products/Release-$sdk/PlaybackPOC.app"
+          test -f "$app/PrivacyInfo.xcprivacy"
+          # Retain symbols for manual required-reason API auditing; this is not App Store approval.
+          xcrun nm -u "$app/PlaybackPOC" > "ios-prototype/Results/release-$platform-undefined-symbols.txt"
+        done
     - name: Preserve native, playback and history results
       if: always()
       uses: actions/upload-artifact@v4

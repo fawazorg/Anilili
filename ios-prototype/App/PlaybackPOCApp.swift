@@ -33,16 +33,20 @@ struct PlaybackView: View {
                 TextField(resolveProvider ? "AniDB server endpoint URL" : "Supplied video URL", text: $address)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder)
+                    .accessibilityLabel(resolveProvider ? "AniDB server endpoint URL" : "Video URL")
+                    .accessibilityIdentifier("playback.address")
                 TextField("Request headers as JSON (optional)", text: $headers)
                     .textInputAutocapitalization(.never).autocorrectionDisabled()
                     .textFieldStyle(.roundedBorder).disabled(resolveProvider)
+                    .accessibilityLabel("Optional request headers as JSON")
                 Text("User-Agent is supported. Other headers are reported as unsupported. No credentials are stored.").font(.caption)
                 if provider.isResolving { ProgressView("Resolving media…").accessibilityIdentifier("provider.resolving") }
                 if let error = provider.errorMessage {
                     Text(error).foregroundStyle(.red).accessibilityIdentifier("provider.error")
-                    Button("Resolve again") { provider.retry() }.accessibilityIdentifier("provider.retry")
+                    Button { provider.retry() } label: { Text("Resolve again").frame(minHeight: 44) }
+                        .accessibilityIdentifier("provider.retry")
                 }
-                Button(resolveProvider ? "Resolve and play" : "Load") {
+                Button {
                     inputError = nil
                     guard let url = URL(string: address), url.scheme != nil else { inputError = "Enter a valid URL."; return }
                     if resolveProvider {
@@ -54,8 +58,9 @@ struct PlaybackView: View {
                         let fields = headers.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? [:] : try JSONDecoder().decode([String: String].self, from: Data(headers.utf8))
                         model.load(url, headers: fields)
                     } catch { inputError = "Headers must be a JSON object with string values." }
-                }.disabled(provider.isResolving)
-                if provider.isResolving { Button("Cancel resolution") { provider.cancel() } }
+                } label: { Text(resolveProvider ? "Resolve and play" : "Load").frame(minHeight: 44) }
+                    .disabled(provider.isResolving)
+                if provider.isResolving { Button { provider.cancel() } label: { Text("Cancel resolution").frame(minHeight: 44) } }
                 PlayerControls(model: model)
                 if let message = inputError { Text(message).foregroundStyle(.red) }
             }.padding()
@@ -71,28 +76,45 @@ struct PlayerControls: View {
     var body: some View {
         VStack(spacing: 12) {
             VideoPlayer(player: model.player).frame(minHeight: 230)
-            HStack {
-                Button("−10 s") { model.seek(by: -10) }.accessibilityLabel("Seek backward ten seconds")
-                Button("Play") { model.play() }.accessibilityIdentifier("player.play")
-                Button("Pause") { model.pause() }.accessibilityIdentifier("player.pause")
-                Button("+10 s") { model.seek(by: 10) }.accessibilityLabel("Seek forward ten seconds")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 16) { transportButtons }.fixedSize(horizontal: true, vertical: false)
+                VStack(spacing: 8) { transportButtons }
             }
             if model.state == "Buffering" || model.state == "Loading" { ProgressView("Preparing playback…") }
             Text("\(model.state) · \(model.seconds, specifier: "%.1f") s")
                 .monospacedDigit().accessibilityIdentifier("player.progress")
             if let error = model.errorMessage { Text(error).foregroundStyle(.red).accessibilityIdentifier("player.error") }
-            Menu("Audio (\(model.audioOptions.count))") {
+            Menu {
                 ForEach(Array(model.audioOptions.enumerated()), id: \.offset) { _, option in
                     Button(option.displayName) { model.selectAudio(option) }
                 }
-            }
-            Menu("Subtitles (\(model.subtitleOptions.count))") {
+            } label: {
+                Text("Audio (\(model.audioOptions.count))").frame(minHeight: 44)
+            }.accessibilityLabel("Choose audio track").accessibilityIdentifier("player.audio")
+                .disabled(model.audioOptions.isEmpty)
+            Menu {
                 Button("Off") { model.selectSubtitle(nil) }
                 ForEach(Array(model.subtitleOptions.enumerated()), id: \.offset) { _, option in
                     Button(option.displayName) { model.selectSubtitle(option) }
                 }
-            }
-            Button("Cancel / release media") { model.stop() }
+            } label: {
+                Text("Subtitles (\(model.subtitleOptions.count))").frame(minHeight: 44)
+            }.accessibilityLabel("Choose subtitles").accessibilityIdentifier("player.subtitles")
+                .disabled(model.subtitleOptions.isEmpty)
+            Button { model.stop() } label: { Text("Stop playback").frame(minHeight: 44) }
+                .accessibilityHint("Releases the current video and saves available progress")
+                .accessibilityIdentifier("player.stop")
         }
+    }
+
+    @ViewBuilder private var transportButtons: some View {
+        Button { model.seek(by: -10) } label: { Text("−10 s").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Seek backward ten seconds").accessibilityIdentifier("player.seek-backward")
+        Button { model.play() } label: { Text("Play").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Play").accessibilityIdentifier("player.play")
+        Button { model.pause() } label: { Text("Pause").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Pause").accessibilityIdentifier("player.pause")
+        Button { model.seek(by: 10) } label: { Text("+10 s").frame(minWidth: 44, minHeight: 44) }
+            .accessibilityLabel("Seek forward ten seconds").accessibilityIdentifier("player.seek-forward")
     }
 }

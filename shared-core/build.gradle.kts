@@ -19,6 +19,12 @@ kotlin {
         testRuns["test"].deviceId = providers.gradleProperty("iosSimulatorDeviceId")
             .getOrElse("iPhone 16")
     }
+    iosArm64 {
+        binaries.framework {
+            baseName = "SharedCore"
+            isStatic = true
+        }
+    }
     sourceSets {
         commonMain.dependencies {
             api(libs.kotlinx.serialization.json)
