@@ -130,7 +130,7 @@ jobs:
         codesign --force --sign - --entitlements "$test_entitlements" --generate-entitlement-der \
           --timestamp=none "$test_app"
         codesign --verify --deep --strict "$test_app"
-        codesign --display --entitlements - "$test_app" > ios-prototype/Results/test-host-entitlements.plist
+        codesign --display --entitlements - --xml "$test_app" > ios-prototype/Results/test-host-entitlements.plist
         python3 ios-prototype/ci/verify_simulator_signing.py \
           ios-prototype/Results/test-host-entitlements.plist org.anilili.playbackpoc
         xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \

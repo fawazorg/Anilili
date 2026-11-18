@@ -202,3 +202,16 @@ POMs returned HTTP200 when checked. The Linux Gradle command now refreshes depen
 metadata rather than reusing missing-artifact results. No dependency or repository
 version was changed. The26 local Python tests and workflow syntax checks pass;
 both hosted jobs still need a successful rerun. Automatic triggers remain paused.
+
+
+## Third hosted-run recovery
+
+[Run44320334266](https://github.com/fawazorg/Anilili/actions/runs/44320334266)
+passed Android. The simulator build and ad-hoc signing also succeeded, but test
+launch was stopped by a plist parse error. The retained entitlement artifact
+contained the correct application identifier/debug claims in codesign's default
+human-readable DER representation (`[Dict]`, `[Key]`, `[Value]`), not XML. The export
+command now explicitly requests `--xml`, matching
+[Apple TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).
+The strict identity and signature guards remain; tests and unsigned Release steps
+remain required. A new hosted run is needed to execute them.
