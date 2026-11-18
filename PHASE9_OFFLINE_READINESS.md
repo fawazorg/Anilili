@@ -86,7 +86,7 @@ has passed. Native background behavior follows the
 | Android mobile unit tests | PASS | 2,583 total; 2,578 passed, five existing optional live probes skipped. |
 | Android TV unit tests | PASS | Same counts; no failures/errors. Skipped probes are NOT TESTED. |
 | Mobile/TV debug builds | PASS | Both assemble tasks succeeded; Android production source/UI/storage untouched. |
-| Python fixture and CI guards | PASS | 26 tests, including actual scoped cookie/UA enforcement, Range validators, truncation and per-test origin shutdown. |
+| Python fixture and CI guards | PASS | 29 tests, including actual scoped cookie/UA enforcement, Range validators, truncation and per-test origin shutdown. |
 | Static CI/project validation | PASS | Manual-only triggers, workflow shell/Python syntax, plist/scheme parsing, 83 Xcode object references and whitespace checks. |
 | Native common tests / Swift compilation | PASS on first hosted run | 115 Native tests passed; Swift test binaries compiled. |
 | Swift simulator tests | FAIL on first hosted run; rerun pending | Run44304079169 executed75 tests. Offline storage/completion and background-session cases failed; existing UI suites passed. Recovery patch now requires76 tests, adding a directory-URL regression. |
@@ -215,3 +215,23 @@ command now explicitly requests `--xml`, matching
 [Apple TN3125](https://developer.apple.com/documentation/technotes/tn3125-inside-code-signing-provisioning-profiles).
 The strict identity and signature guards remain; tests and unsigned Release steps
 remain required. A new hosted run is needed to execute them.
+
+
+## Fourth hosted-run recovery
+
+[Run44329265802](https://github.com/fawazorg/Anilili/actions/runs/44329265802)
+passed Android, but the simulator crash artifact reports SIGKILL with termination
+namespace CODESIGNING and indicator `Taskgated Invalid Signature`. The manual
+re-signing introduced during the second recovery copied iOS simulator claims into
+the macOS host signature and prevented application launch. No simulator playback
+or Release validation passed in this run.
+
+The manual re-signing is removed. CI retains Xcode's ad-hoc signature, verifies it,
+and checks the application identifier and debug claim in the executable's actual
+`__TEXT,__entitlements` section. A bounds-checked Intel Mach-O reader has three
+regression tests for valid identity, malformed sections and incorrect identity.
+A simulator install/launch smoke check now precedes the unchanged XCTest run.
+All 29 local Python tests pass; workflow shell syntax and manual-only triggers
+also pass inspection. All required simulator suites, playback assertions and
+Release builds remain mandatory. Hosted validation of this correction is pending;
+physical-device signing and playback remain NOT TESTED.
