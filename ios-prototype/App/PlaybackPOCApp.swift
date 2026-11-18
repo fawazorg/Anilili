@@ -8,11 +8,33 @@ struct PlaybackPOCApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                ProviderJourneyView().tabItem { Label("Demo journey", systemImage: "play.circle") }
-                CatalogView().tabItem { Label("AniList", systemImage: "magnifyingglass") }
-                PlaybackView().tabItem { Label("Playback", systemImage: "play.rectangle") }
+                ProviderJourneyView().tabItem { Label("Browse", systemImage: "house") }
+                CatalogView().tabItem { Label("Search", systemImage: "magnifyingglass") }
                 DownloadsView().tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+                SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
             }
+        }
+    }
+}
+
+private struct SettingsView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Playback tools") {
+                    NavigationLink("Open a video URL") {
+                        PlaybackView().navigationTitle("Open a video URL")
+                    }
+                    .accessibilityIdentifier("settings.manualPlayback")
+                }
+                Section("About") {
+                    LabeledContent("App", value: "Anilili")
+                    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                        LabeledContent("Version", value: version)
+                    }
+                }
+            }
+            .navigationTitle("Settings")
         }
     }
 }

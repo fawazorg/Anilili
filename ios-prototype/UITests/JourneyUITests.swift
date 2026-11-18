@@ -1,6 +1,26 @@
 import XCTest
 
 final class JourneyUITests: XCTestCase {
+    func testPrimaryTabsExposeDownloadsAndManualPlaybackSettings() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let tabs = app.tabBars
+        XCTAssertTrue(tabs.buttons["Browse"].exists)
+        XCTAssertTrue(tabs.buttons["Search"].exists)
+
+        tabs.buttons["Downloads"].tap()
+        XCTAssertTrue(app.navigationBars["Downloads"].waitForExistence(timeout: 5))
+
+        tabs.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.buttons["settings.manualPlayback"].tap()
+        XCTAssertTrue(app.textFields["playback.address"].waitForExistence(timeout: 5))
+
+        tabs.buttons["Browse"].tap()
+        XCTAssertTrue(app.textFields["journey.search"].waitForExistence(timeout: 5))
+    }
+
     func testDemoCatalogToEpisodePlaybackAndBack() throws {
         continueAfterFailure = false
         let app = XCUIApplication()
