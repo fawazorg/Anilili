@@ -55,6 +55,8 @@ object FlixcloudBridge {
         with(wv.settings) {
             javaScriptEnabled = true
             domStorageEnabled = true
+            // Preserve Web SQL for older WebView versions that still support it.
+            @Suppress("DEPRECATION")
             databaseEnabled = true
             mediaPlaybackRequiresUserGesture = false
             mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW

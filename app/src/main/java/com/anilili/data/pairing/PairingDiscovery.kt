@@ -165,7 +165,12 @@ internal class PairingBrowser(
                 scope.launch {
                     val resolved = resolveLock.withLock { resolve(info, name) }
                     if (resolved == null) return@launch
-                    val host = resolved.host?.hostAddress
+                    @Suppress("DEPRECATION") // Android 13 and earlier expose only a single address.
+                    val host = if (android.os.Build.VERSION.SDK_INT >= 34) {
+                        resolved.hostAddresses.firstOrNull()?.hostAddress
+                    } else {
+                        resolved.host?.hostAddress
+                    }
                     if (host.isNullOrBlank()) {
                         // Resolving without an address happens on some stacks and would otherwise
                         // drop the TV from the list with no explanation at all.

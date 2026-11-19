@@ -1,5 +1,6 @@
 package com.anilili.ui.components
 
+import android.net.Uri
 import android.os.SystemClock
 import android.view.TextureView
 import androidx.annotation.OptIn
@@ -24,7 +25,6 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
-import androidx.media3.datasource.RawResourceDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import com.anilili.R
 import com.anilili.diagnostics.DiagnosticsLog
@@ -79,7 +79,7 @@ fun VideoLaunchSplash(
     }
     val player = remember {
         ExoPlayer.Builder(context).build().apply {
-            setMediaItem(MediaItem.fromUri(RawResourceDataSource.buildRawResourceUri(R.raw.launch_intro)))
+            setMediaItem(MediaItem.fromUri(Uri.parse("android.resource://${context.packageName}/${R.raw.launch_intro}")))
             // Held on its first frame until that frame is on screen. Started straight away, the audio
             // clock ran on while a cold start was still laying out the surface, and the video joined
             // two seconds in with the whole opening dropped.
