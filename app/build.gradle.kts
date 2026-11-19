@@ -26,9 +26,30 @@ val tmdbReadToken = providers.gradleProperty("tmdbReadToken").orNull
     ?: providers.environmentVariable("TMDB_READ_TOKEN").orNull
     ?: ""
 
+// Release CI supplies a private temporary keystore path. Local release builds can
+// still read the existing keystore.properties mechanism.
+val releaseSigningMode = providers.environmentVariable("ANILILI_RELEASE_SIGNING").orNull
 val keystoreProperties = Properties().apply {
-    val file = rootProject.file("keystore.properties")
-    if (file.exists()) file.inputStream().use { load(it) }
+    when (releaseSigningMode) {
+        "signed" -> {
+            mapOf(
+                "storeFile" to "ANILILI_KEYSTORE_PATH",
+                "storePassword" to "ANDROID_KEYSTORE_PASSWORD",
+                "keyAlias" to "ANDROID_KEY_ALIAS",
+                "keyPassword" to "ANDROID_KEY_PASSWORD",
+            ).forEach { (property, variable) ->
+                val value = providers.environmentVariable(variable).orNull
+                require(!value.isNullOrEmpty()) { "Missing release signing input: $variable" }
+                setProperty(property, value)
+            }
+        }
+        "unsigned" -> Unit
+        null -> {
+            val file = rootProject.file("keystore.properties")
+            if (file.exists()) file.inputStream().use { load(it) }
+        }
+        else -> error("Invalid ANILILI_RELEASE_SIGNING mode")
+    }
 }
 
 android {
@@ -87,14 +108,12 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            // No keystore.properties means no release key on this machine. Falling back to the
-            // debug key keeps `assembleRelease` — and the R8/proguard build it exercises —
-            // runnable anywhere; such an APK cannot replace an existing release install, so the
-            // release workflow publishes builds made without the real keystore as drafts.
+            // Missing release credentials produce an unsigned APK for local checks.
+            // The publication job requires the persistent release key.
             signingConfig = if (keystoreProperties.getProperty("storeFile") != null) {
                 signingConfigs.getByName("release")
             } else {
-                signingConfigs.getByName("debug")
+                null
             }
             manifestPlaceholders["usesCleartextTraffic"] = "false"
             proguardFiles(

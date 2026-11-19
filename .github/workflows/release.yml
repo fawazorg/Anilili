@@ -1,171 +1,177 @@
-# Builds both flavors and publishes them as a GitHub Release.
-#
-# Runs manually while automatic triggers are paused. The version and release tag come from
-# `appVersionName`/`appVersionCode` in app/build.gradle.kts. Bump those values, then dispatch
-# this workflow manually to publish.
-#
-# Signing: the release keystore never lives in this repo. It is passed as the base64 secret
-# ANDROID_KEYSTORE_BASE64 (plus ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and
-# ANDROID_KEY_PASSWORD) and reassembled into keystore.properties at build time. Without those
-# secrets the build still produces APKs, but signed with the debug key instead — such an APK
-# cannot replace an existing release install, so it is published as a draft with a warning
-# rather than as a real release.
-#
-# Note the app's own updater reads the Nostr manifest (scripts/nostr_update.py), not this release:
-# after publishing here, `publish --version <v> --apk-url <release asset url>` keeps both channels
-# pointing at the same build.
 name: Release
-
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
+    inputs:
+      mode:
+        description: Verify artifacts only, or publish an existing version tag
+        type: choice
+        options: [dry-run, publish]
+        default: dry-run
 
 permissions:
-  contents: write
-
+  contents: read
 concurrency:
-  group: release-${{ github.ref }}
+  group: ${{ (github.event_name == 'push' || inputs.mode == 'publish') && 'anilili-publish' || format('anilili-dry-run-{0}', github.ref) }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
-    timeout-minutes: 90
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.plan.outputs.version }}
+      build: ${{ steps.plan.outputs.build }}
+      tag: ${{ steps.plan.outputs.tag }}
+      prerelease: ${{ steps.plan.outputs.prerelease }}
+      mode: ${{ steps.plan.outputs.mode }}
     steps:
-      - name: Check out
-        uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          # Full history: release notes are cut from the commits since the previous tag.
           fetch-depth: 0
+          persist-credentials: false
+      - name: Check canonical version and release ref
+        id: plan
+        env:
+          RELEASE_MODE: ${{ github.event_name == 'push' && 'publish' || inputs.mode }}
+        run: python3 scripts/release_plan.py
 
-      - name: Set up JDK 17
-        uses: actions/setup-java@v5
+  validate:
+    needs: plan
+    uses: ./.github/workflows/kmp-ci.yml
+    with:
+      release-version: ${{ needs.plan.outputs.version }}
+      release-build: ${{ needs.plan.outputs.build }}
+    secrets:
+      GRADLE_ENCRYPTION_KEY: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
+
+  android-release:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    environment: ${{ needs.plan.outputs.mode == 'publish' && 'release' || 'release-dry-run' }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b6effb05e454b25005698d916606bdc6ffcbf961 # v5
         with:
           distribution: temurin
           java-version: '17'
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Install Android SDK components
-        run: |
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses >/dev/null || true
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" \
-            "platforms;android-36" "build-tools;35.0.1" "platform-tools" >/dev/null
-
-      - name: Restore release keystore
-        id: keystore
+      - uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: platform-tools
+      - run: sdkmanager 'platforms;android-36' 'build-tools;35.0.1'
+      - uses: gradle/actions/setup-gradle@ed408507eac070d1f99cc633dbcf757c94c7933a # v4
+        with:
+          cache-read-only: false
+      - name: Build, test, and verify both release APKs
         env:
-          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
-          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_BUILD: ${{ needs.plan.outputs.build }}
+          RELEASE_MODE: ${{ needs.plan.outputs.mode }}
+          ANDROID_SIGNER_CERT_SHA256: ${{ vars.ANDROID_SIGNER_CERT_SHA256 }}
+          ANDROID_KEYSTORE_BASE64: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEYSTORE_BASE64 || '' }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEYSTORE_PASSWORD || '' }}
+          ANDROID_KEY_ALIAS: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEY_ALIAS || '' }}
+          ANDROID_KEY_PASSWORD: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEY_PASSWORD || '' }}
+        run: bash scripts/release_android.sh
+      - name: Require Android Release unit-test results
         run: |
-          if [ -z "$KEYSTORE_BASE64" ]; then
-            echo "signed=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > release.keystore
-          cat > keystore.properties <<EOF
-          storeFile=release.keystore
-          storePassword=$KEYSTORE_PASSWORD
-          keyAlias=$KEY_ALIAS
-          keyPassword=$KEY_PASSWORD
-          EOF
-          echo "signed=true" >> "$GITHUB_OUTPUT"
+          python3 - <<'PYTEST'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
 
-      - name: Build and test
-        run: |
-          chmod +x gradlew
-          ./gradlew testMobileReleaseUnitTest testTvReleaseUnitTest assembleRelease --stacktrace
+          for flavor in ("Mobile", "Tv"):
+              reports = Path(f"app/build/test-results/test{flavor}ReleaseUnitTest")
+              suites = [ET.parse(path).getroot() for path in reports.glob("TEST-*.xml")]
+              total, skipped, failures, errors = (
+                  sum(int(suite.get(key, 0)) for suite in suites)
+                  for key in ("tests", "skipped", "failures", "errors")
+              )
+              if total <= skipped or failures or errors:
+                  raise SystemExit(f"Android {flavor} Release tests did not pass")
+              print(f"{flavor} Release passed {total - skipped} tests, skipped {skipped}")
+          PYTEST
+      - name: Preserve Android Release test results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-release-test-results
+          path: app/build/test-results/test*ReleaseUnitTest/
+          retention-days: 7
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-android
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Read version
-        id: version
-        run: |
-          VERSION_NAME=$(tr -d '\r' < app/build.gradle.kts | sed -n 's/^val appVersionName = "\(.*\)"$/\1/p')
-          VERSION_CODE=$(tr -d '\r' < app/build.gradle.kts | sed -n 's/^val appVersionCode = \([0-9][0-9]*\)$/\1/p')
-          if [ -z "$VERSION_NAME" ] || [ -z "$VERSION_CODE" ]; then
-            echo "Could not read appVersionName/appVersionCode from app/build.gradle.kts" >&2
-            exit 1
-          fi
-          echo "version=$VERSION_NAME" >> "$GITHUB_OUTPUT"
-          echo "code=$VERSION_CODE" >> "$GITHUB_OUTPUT"
-          echo "tag=v$VERSION_NAME" >> "$GITHUB_OUTPUT"
-
-      - name: Collect artifacts
-        run: |
-          mkdir -p dist
-          cp app/build/outputs/apk/mobile/release/*.apk dist/
-          cp app/build/outputs/apk/tv/release/*.apk dist/
-          cp app/build/outputs/mapping-archive/*.txt dist/ 2>/dev/null || true
-          ls -la dist/
-          test -n "$(find dist -maxdepth 1 -name '*.apk' | head -n 1)"
-
-      - name: Write release notes
+  verify:
+    needs: [plan, validate, android-release]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          pattern: release-*
+          path: release-input
+      - name: Verify the complete release and generate checksums
         env:
-          VERSION: ${{ steps.version.outputs.version }}
-          CODE: ${{ steps.version.outputs.code }}
-          SIGNED: ${{ steps.keystore.outputs.signed }}
-        run: |
-          PREV_TAG=$(git describe --tags --abbrev=0 2>/dev/null || true)
-          {
-            echo "Anilili v$VERSION (build $CODE)"
-            echo
-            if [ "$SIGNED" != "true" ]; then
-              echo "> ⚠️ Built **without** the release keystore: these APKs carry the debug key and"
-              echo "> cannot update an existing install. Add the ANDROID_KEYSTORE_BASE64 /"
-              echo "> ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD secrets"
-              echo "> and re-run this workflow to publish a signed build."
-              echo
-            fi
-            echo "## Changes"
-            echo
-            if [ -n "$PREV_TAG" ]; then
-              git log --oneline --no-decorate "$PREV_TAG..HEAD"
-            else
-              git log --oneline --no-decorate -n 30
-            fi
-            echo
-            echo "## Assets"
-            echo
-            echo "- \`Anilili.apk\` — universal (any ARM device)"
-            echo "- \`Anilili_arm64-v8a.apk\` / \`Anilili_armeabi-v7a.apk\` — per-ABI phone splits"
-            echo "- \`Anilili_tv*.apk\` — the Fire TV build, same ABI split"
-            echo "- \`mapping-*.txt\` — R8 mappings for deobfuscating crash reports from this build"
-          } > release_notes.md
+          RELEASE_MODE: ${{ needs.plan.outputs.mode }}
+          RELEASE_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_BUILD: ${{ needs.plan.outputs.build }}
+        run: RELEASE_BUILD_DATE="$(date -u +%F)" python3 scripts/assemble_release.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: verified-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
 
-      - name: Publish release
+  publish:
+    if: needs.plan.outputs.mode == 'publish'
+    needs: [plan, verify]
+    runs-on: ubuntu-24.04
+    environment: release
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: verified-release
+          path: dist
+      - name: Upload draft assets and publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ steps.version.outputs.tag }}
-          VERSION: ${{ steps.version.outputs.version }}
-          SIGNED: ${{ steps.keystore.outputs.signed }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.plan.outputs.tag }}
+          PRERELEASE: ${{ needs.plan.outputs.prerelease }}
         run: |
+          set -euo pipefail
+          cd dist
+          sha256sum --strict --check SHA256SUMS.txt
           if gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG already exists; refreshing its assets."
-            gh release edit "$TAG" --notes-file release_notes.md
-            # A draft left behind by an unsigned run becomes a real release once the keystore
-            # secrets are in place.
-            if [ "$SIGNED" = "true" ]; then
-              gh release edit "$TAG" --draft=false
-            fi
-          else
-            # A published release only when it is signed; an unsigned build becomes a draft so
-            # nobody installs an APK that cannot update over what they already have.
-            DRAFT_FLAG=""
-            if [ "$SIGNED" != "true" ]; then DRAFT_FLAG="--draft"; fi
-            gh release create "$TAG" \
-              --target "$GITHUB_SHA" \
-              --title "Anilili v$VERSION" \
-              --notes-file release_notes.md \
-              $DRAFT_FLAG
+            echo "Release $TAG already exists. Resolve it manually before retrying." >&2
+            exit 1
           fi
-          gh release upload "$TAG" dist/* --clobber
-          {
-            echo "### Release $TAG"
-            echo
-            gh release view "$TAG" --json url --jq '.url' | sed 's/^/- /'
-            echo
-            echo '```'
-            sha256sum dist/*
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+          # Recheck the remote tag after approvals and builds.
+          ref=$(gh api "repos/$GH_REPO/git/ref/tags/$TAG")
+          ref_type=$(jq -r '.object.type' <<< "$ref")
+          ref_sha=$(jq -r '.object.sha' <<< "$ref")
+          while [[ "$ref_type" == tag ]]; do
+            ref=$(gh api "repos/$GH_REPO/git/tags/$ref_sha")
+            ref_type=$(jq -r '.object.type' <<< "$ref")
+            ref_sha=$(jq -r '.object.sha' <<< "$ref")
+          done
+          test "$ref_type" = commit
+          test "$ref_sha" = "$GITHUB_SHA"
+          args=()
+          if [[ "$PRERELEASE" == true ]]; then args+=(--prerelease); fi
+          gh release create "$TAG" ./* --repo "$GH_REPO" --draft --verify-tag --title "Anilili $TAG" \
+            --notes-file RELEASE_NOTES.md "${args[@]}"
+          gh release edit "$TAG" --draft=false
