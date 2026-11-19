@@ -23,13 +23,28 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
       with:
         cache-read-only: false
+        cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
     - name: Shared JVM tests, Android unit tests and both debug flavors
       shell: bash
       run: |
         set -euo pipefail
-        ./gradlew :shared-core:jvmTest :app:testMobileDebugUnitTest :app:testTvDebugUnitTest \
-          :app:assembleMobileDebug :app:assembleTvDebug -x :app:syncParityCorpus --refresh-dependencies --stacktrace \
-          2>&1 | tee android-gradle.log
+        tasks=(
+          :shared-core:jvmTest --rerun
+          :app:testMobileDebugUnitTest --rerun
+          :app:testTvDebugUnitTest --rerun
+          :app:assembleMobileDebug :app:assembleTvDebug
+          -x :app:syncParityCorpus --stacktrace
+        )
+        if ./gradlew "${tasks[@]}" 2>&1 | tee android-gradle.log; then
+          exit 0
+        else
+          status=$?
+        fi
+        if ! grep -Eq 'Could not find org\.jetbrains\.(kotlin:kotlin-test:2\.1\.21|kotlinx:kotlinx-coroutines-test:1\.8\.1)' android-gradle.log; then
+          exit "$status"
+        fi
+        echo "Retrying after refreshing missing Kotlin test dependency metadata."
+        ./gradlew "${tasks[@]}" --refresh-dependencies 2>&1 | tee -a android-gradle.log
     - name: Preserve test results
       if: always()
       uses: actions/upload-artifact@v4
@@ -57,6 +72,7 @@ jobs:
     - uses: gradle/actions/setup-gradle@v4
       with:
         cache-read-only: false
+        cache-encryption-key: ${{ secrets.GRADLE_ENCRYPTION_KEY }}
     - name: Restore Kotlin Native toolchain
       id: native-cache
       uses: actions/cache/restore@v4
