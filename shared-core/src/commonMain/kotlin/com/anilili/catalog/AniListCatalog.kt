@@ -51,7 +51,7 @@ class AniListCatalog(
             if (hideAdult) put("isAdult", false)
         }
         val body = post(gql, vars)
-        val parsed = decode { json.decodeFromString(GqlPageResponse.serializer(), body) }.data?.page
+        val parsed = decode { json.decodeFromJsonElement(GqlPageResponse.serializer(), body) }.data?.page
         return MediaPage(parsed?.media.orEmpty(), parsed?.pageInfo?.hasNextPage ?: false, page, parsed?.pageInfo?.total ?: 0)
     }
 
@@ -62,10 +62,10 @@ class AniListCatalog(
             }
         """.trimIndent()
         val body = post(gql, buildJsonObject { put("id", id) })
-        return decode { json.decodeFromString(GqlMediaResponse.serializer(), body) }.data?.media
+        return decode { json.decodeFromJsonElement(GqlMediaResponse.serializer(), body) }.data?.media
     }
 
-    private suspend fun post(query: String, variables: JsonObject): String {
+    private suspend fun post(query: String, variables: JsonObject): JsonObject {
         currentCoroutineContext().ensureActive()
         val body = buildJsonObject { put("query", query); put("variables", variables) }.toString()
         // Preserve platform exceptions, including Android's existing auth/rate-limit guidance.
@@ -85,7 +85,7 @@ class AniListCatalog(
             }
         }
         if (!root.containsKey("data")) throw malformed()
-        return response.body
+        return root
     }
 
     private inline fun <T> decode(block: () -> T): T = try { block() }

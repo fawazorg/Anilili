@@ -159,6 +159,22 @@ class WatchHistoryRepositoryTest {
         assertEquals(20_000, records.single().positionMs)
     }
 
+    @Test fun equalTimestampDuplicatesPreferGenerationThenSequence() {
+        val store = MemoryHistoryStorage()
+        val repo = repository(store)
+        val session = start(repo)
+        repo.update(session, 10_000.0, 100_000.0, 200, 1)
+        val row = requireNotNull(store.content).substringAfter("\"records\":[").substringBeforeLast("]")
+        val newerGeneration = row.replace("\"generation\":1", "\"generation\":2")
+        val newerSequence = newerGeneration.replace("\"lastSequence\":1", "\"lastSequence\":2")
+        val olderGeneration = row.replace("\"lastSequence\":1", "\"lastSequence\":9")
+        store.content = """{"version":1,"records":[$olderGeneration,$newerGeneration,$newerSequence]}"""
+
+        val current = repo.snapshot().records.single()
+        assertEquals(2L, current.generation)
+        assertEquals(2L, current.lastSequence)
+    }
+
     @Test fun storageFailuresNeverReportAnAcceptedWrite() {
         val store = MemoryHistoryStorage()
         val repo = repository(store)

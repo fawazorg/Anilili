@@ -158,7 +158,7 @@ final class PlaybackModel: ObservableObject {
         observations = [
             item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
                 Task { @MainActor [weak self] in
-                    guard let self, self.generation == token else { return }
+                    guard let self, self.generation == token, self.errorMessage == nil else { return }
                     if item.status == .failed {
                         let error = item.error as NSError?
                         self.fail("Media load failed: \(error?.domain ?? "unknown") code \(error?.code ?? 0).", code: error?.code)
@@ -169,7 +169,7 @@ final class PlaybackModel: ObservableObject {
                             let target = duration.isFinite && duration > 0 ? min(resume, max(0, duration - 0.1)) : resume
                             self.player.seek(to: CMTime(seconds: target, preferredTimescale: 600), toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
                                 Task { @MainActor [weak self] in
-                                    guard let self, self.generation == token else { return }
+                                    guard let self, self.generation == token, self.errorMessage == nil else { return }
                                     guard finished else { self.pendingResumeSeconds = nil; self.fail("The saved playback position could not be restored."); return }
                                     self.pendingResumeSeconds = nil
                                     self.seconds = target
@@ -199,7 +199,7 @@ final class PlaybackModel: ObservableObject {
         notifications = [
             NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification, object: item, queue: .main) { [weak self] _ in
                 Task { @MainActor [weak self] in
-                    guard let self, self.generation == token else { return }
+                    guard let self, self.generation == token, self.errorMessage == nil else { return }
                     self.wantsToPlay = false
                     self.state = "Ended"
                     self.emitProgress(immediate: true)
@@ -246,7 +246,7 @@ final class PlaybackModel: ObservableObject {
     }
 
     func play() {
-        guard isForeground, !isInterrupted, player.currentItem != nil else {
+        guard isForeground, !isInterrupted, errorMessage == nil, player.currentItem != nil else {
             wantsToPlay = false
             return
         }
