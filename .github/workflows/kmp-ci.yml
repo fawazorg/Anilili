@@ -24,8 +24,12 @@ jobs:
       with:
         cache-read-only: false
     - name: Shared JVM tests, Android unit tests and both debug flavors
-      run: ./gradlew :shared-core:jvmTest :app:testMobileDebugUnitTest :app:testTvDebugUnitTest :app:assembleMobileDebug
-        :app:assembleTvDebug -x :app:syncParityCorpus --stacktrace
+      shell: bash
+      run: |
+        set -euo pipefail
+        ./gradlew :shared-core:jvmTest :app:testMobileDebugUnitTest :app:testTvDebugUnitTest \
+          :app:assembleMobileDebug :app:assembleTvDebug -x :app:syncParityCorpus --refresh-dependencies --stacktrace \
+          2>&1 | tee android-gradle.log
     - name: Preserve test results
       if: always()
       uses: actions/upload-artifact@v4
@@ -34,9 +38,10 @@ jobs:
         path: |
           shared-core/build/reports/tests/
           app/build/reports/tests/
+          android-gradle.log
   apple:
     runs-on: macos-15-intel
-    timeout-minutes: 60
+    timeout-minutes: 90
     env:
       DEVELOPER_DIR: /Applications/Xcode_16.4.app/Contents/Developer
     steps:
@@ -84,20 +89,19 @@ jobs:
         print(f"Selected {runtime}: {device['name']} ({device['udid']})")
         with open(os.environ['GITHUB_ENV'], 'a') as f:
             f.write(f"IOS_SIMULATOR_UDID={device['udid']}\n")
-        # Begin booting while Gradle compiles the framework; readiness is checked below.
+        # Begin booting before the fixture checks.
         if device['state'] != 'Booted':
             subprocess.run(['xcrun', 'simctl', 'boot', device['udid']], check=True)
         PY
-    - name: Link shared catalog, episodes, and playback framework
-      run: ./gradlew :shared-core:linkDebugFrameworkIosX64 --stacktrace
     - name: Check fixture server and wait for simulator
       shell: bash
       run: |
         set -euo pipefail
         python3 -m unittest discover -s ios-prototype/ci -p 'test_*.py'
         xcrun simctl bootstatus "$IOS_SIMULATOR_UDID" -b
-    - name: Run common tests on iOS x64 simulator
-      run: ./gradlew :shared-core:iosX64Test -PiosSimulatorDeviceId="$IOS_SIMULATOR_UDID" --stacktrace
+    - name: Link the shared framework and run common simulator tests
+      run: ./gradlew :shared-core:linkDebugFrameworkIosX64 :shared-core:iosX64Test --rerun
+        -PiosSimulatorDeviceId="$IOS_SIMULATOR_UDID" --stacktrace
     - name: Require simulator test results
       shell: bash
       run: |
@@ -149,15 +153,6 @@ jobs:
         xcrun simctl launch --terminate-running-process "$IOS_SIMULATOR_UDID" org.anilili.playbackpoc \
           2>&1 | tee ios-prototype/Results/launch-smoke.log
         xcrun simctl terminate "$IOS_SIMULATOR_UDID" org.anilili.playbackpoc
-        # Fail quickly on the active HLS regression; a successful preflight still requires
-        # the complete suite and its zero-skipped/missing-test guard below.
-        xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
-          -configuration Debug -sdk iphonesimulator \
-          -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
-          -derivedDataPath "$test_build" -parallel-testing-enabled NO \
-          -only-testing:PlaybackPOCTests/OfflineDownloadTests/testHLSNativePackagePlaysAfterItsOriginIsDisabled \
-          -resultBundlePath ios-prototype/Results/HLSPreflight.xcresult \
-          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- 2>&1 | tee ios-prototype/Results/hls-preflight.log
         xcodebuild test-without-building -project ios-prototype/PlaybackPOC.xcodeproj -scheme PlaybackPOC \
           -configuration Debug -sdk iphonesimulator \
           -destination "platform=iOS Simulator,id=$IOS_SIMULATOR_UDID,arch=x86_64" \
