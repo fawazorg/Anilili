@@ -116,6 +116,7 @@ class AniDbSourceTest {
         assertEquals(3, calls)
     }
 
+    @OptIn(ExperimentalCoroutinesApi::class)
     @Test fun retryAfterIsRespectedWithoutShorteningLongOrDateBackoff() = runTest {
         for (status in listOf(429, 503)) {
             for (header in listOf("60", "Wed, 18 Nov 2026 12:00:00 GMT", "invalid", "-1")) {

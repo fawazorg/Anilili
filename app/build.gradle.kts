@@ -1,4 +1,4 @@
-import com.android.build.OutputFile
+import com.android.build.api.variant.FilterConfiguration
 import java.util.Properties
 
 plugins {
@@ -170,7 +170,7 @@ android {
     applicationVariants.all {
         outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            val abi = output.getFilter(OutputFile.ABI)
+            val abi = output.getFilter(FilterConfiguration.FilterType.ABI.name)
             val buildTypeSuffix = if (buildType.name == "release") "" else "-${buildType.name}"
             // Updaters in v0.1.32 and earlier install the release's first .apk asset, and
             // GitHub orders assets by name: '.' sorts before '_', so "Anilili.apk" (universal,

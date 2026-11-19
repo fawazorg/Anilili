@@ -8,11 +8,33 @@ struct PlaybackPOCApp: App {
     var body: some Scene {
         WindowGroup {
             TabView {
-                ProviderJourneyView().tabItem { Label("Demo journey", systemImage: "play.circle") }
-                CatalogView().tabItem { Label("AniList", systemImage: "magnifyingglass") }
-                PlaybackView().tabItem { Label("Playback", systemImage: "play.rectangle") }
+                ProviderJourneyView().tabItem { Label("Browse", systemImage: "house") }
+                CatalogView().tabItem { Label("Search", systemImage: "magnifyingglass") }
                 DownloadsView().tabItem { Label("Downloads", systemImage: "arrow.down.circle") }
+                SettingsView().tabItem { Label("Settings", systemImage: "gearshape") }
             }
+        }
+    }
+}
+
+private struct SettingsView: View {
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Playback tools") {
+                    NavigationLink("Open a video URL") {
+                        PlaybackView().navigationTitle("Open a video URL")
+                    }
+                    .accessibilityIdentifier("settings.manualPlayback")
+                }
+                Section("About") {
+                    LabeledContent("App", value: "Anilili")
+                    if let version = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String {
+                        LabeledContent("Version", value: version)
+                    }
+                }
+            }
+            .navigationTitle("Settings")
         }
     }
 }
@@ -78,12 +100,18 @@ struct PlayerControls: View {
     @ObservedObject var model: PlaybackModel
     var body: some View {
         VStack(spacing: 12) {
-            VideoPlayer(player: model.player).frame(minHeight: 230)
+            VideoPlayer(player: model.player)
+                .aspectRatio(16.0 / 9.0, contentMode: .fit)
+                .accessibilityLabel("Episode video")
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) { transportButtons }.fixedSize(horizontal: true, vertical: false)
                 VStack(spacing: 8) { transportButtons }
             }
-            if model.state == "Buffering" || model.state == "Loading" { ProgressView("Preparing playback…") }
+            if model.state == "Buffering" {
+                ProgressView("Buffering video…")
+            } else if model.state == "Loading" {
+                ProgressView("Preparing playback…")
+            }
             Text("\(model.state) · \(model.seconds, specifier: "%.1f") s")
                 .monospacedDigit().accessibilityIdentifier("player.progress")
             if let error = model.errorMessage { Text(error).foregroundStyle(.red).accessibilityIdentifier("player.error") }

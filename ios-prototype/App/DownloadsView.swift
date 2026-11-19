@@ -77,6 +77,7 @@ final class OfflinePlaybackModel: ObservableObject {
 
 struct DownloadsView: View {
     @ObservedObject private var engine = OfflineDownloadEngine.shared
+    @State private var pendingDeletion: DownloadRecord?
     @StateObject private var model = OfflinePlaybackModel()
     @Environment(\.scenePhase) private var scenePhase
 
@@ -116,22 +117,11 @@ struct DownloadsView: View {
                             } else { ProgressView("Downloading…") }
                         }
                         if let error = record.failure { Text(error.name.replacingOccurrences(of: "_", with: " ").capitalized).foregroundStyle(.red) }
-                        HStack {
-                            if record.state == .completed {
-                                Button("Play offline") { model.play(record) }
-                                    .accessibilityIdentifier("downloads.play.\(record.downloadRowID)")
-                            }
-                            if record.state == .downloading || record.state == .queued {
-                                Button("Pause") { engine.pause(record: record) }
-                            }
-                            if record.state == .paused || record.state == .failed || record.state == .cancelled {
-                                Button(record.state == .paused ? "Resume" : "Retry") { _ = engine.resume(record: record) }
-                            }
-                            if record.state != .completed && record.state != .cancelled {
-                                Button("Cancel") { engine.cancel(record: record) }
-                            }
+                        ViewThatFits(in: .horizontal) {
+                            HStack { downloadActions(record) }.fixedSize(horizontal: true, vertical: false)
+                            VStack(alignment: .leading) { downloadActions(record) }
                         }.buttonStyle(.bordered).frame(minHeight: 44)
-                        Button("Delete download", role: .destructive) { model.delete(record) }
+                        Button("Delete download", role: .destructive) { pendingDeletion = record }
                             .frame(minHeight: 44)
                     }
                 }
@@ -139,6 +129,15 @@ struct DownloadsView: View {
             .navigationTitle("Downloads")
             .accessibilityIdentifier("downloads.list")
             .toolbar { Button("Refresh") { engine.refresh() } }
+            .alert("Delete download?", isPresented: Binding(
+                get: { pendingDeletion != nil },
+                set: { if !$0 { pendingDeletion = nil } }
+            ), presenting: pendingDeletion) { record in
+                Button("Delete", role: .destructive) { model.delete(record) }
+                Button("Keep download", role: .cancel) {}
+            } message: { record in
+                Text(record.episodeTitle)
+            }
         }
         .onAppear { engine.refresh() }
         .onChange(of: scenePhase) { _, phase in
@@ -146,6 +145,22 @@ struct DownloadsView: View {
             if phase == .active { engine.refresh() }
         }
         .onDisappear { model.stop() }
+    }
+
+    @ViewBuilder private func downloadActions(_ record: DownloadRecord) -> some View {
+        if record.state == .completed {
+            Button("Play offline") { model.play(record) }
+                .accessibilityIdentifier("downloads.play.\(record.downloadRowID)")
+        }
+        if record.state == .downloading || record.state == .queued {
+            Button("Pause") { engine.pause(record: record) }
+        }
+        if record.state == .paused || record.state == .failed || record.state == .cancelled {
+            Button(record.state == .paused ? "Resume" : "Retry") { _ = engine.resume(record: record) }
+        }
+        if record.state != .completed && record.state != .cancelled {
+            Button("Cancel") { engine.cancel(record: record) }
+        }
     }
 }
 

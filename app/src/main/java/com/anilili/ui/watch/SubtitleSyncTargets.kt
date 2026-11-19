@@ -3,6 +3,7 @@ package com.anilili.ui.watch
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.annotation.OptIn
 import com.anilili.data.model.SubtitleItem
 
 /** The language of the text track currently playing, or null when subtitles are off. */

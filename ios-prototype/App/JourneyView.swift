@@ -34,7 +34,7 @@ struct JourneyView: View {
                 .navigationDestination(for: JourneyModel.Route.self) { route in
                     switch route {
                     case .details:
-                        JourneyDetailsScreen(journey: model, details: model.detailsModel, history: model.history)
+                        JourneyDetailsScreen(journey: model, details: model.detailsModel, history: model.history, downloads: model.downloads)
                     case .playback:
                         JourneyPlaybackScreen(journey: model, history: model.history)
                     }
@@ -69,55 +69,63 @@ private struct JourneyCatalogScreen: View {
             if let error = history.errorMessage {
                 Text(error).foregroundStyle(.red).font(.footnote).accessibilityIdentifier("history.error")
             }
-            if !history.continuing.isEmpty {
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Continue Watching").font(.headline).accessibilityAddTraits(.isHeader)
-                    ForEach(history.continuing, id: \.historyRowID) { record in
-                        Button { journey.continueWatching(record) } label: {
-                            VStack(alignment: .leading) {
-                                Text(record.title).font(.headline).fixedSize(horizontal: false, vertical: true)
-                                Text("\(record.episodeTitle) · \(Int(record.positionMs / 1_000)) seconds")
-                                    .font(.caption)
-                            }.frame(minHeight: 44, alignment: .leading)
-                        }.accessibilityHint("Resume this episode from its saved position")
-                            .accessibilityIdentifier("history.continue.\(record.identity.episodeId)")
+            List {
+                continueWatching
+                if catalog.isLoading {
+                    ProgressView("Loading catalog…").accessibilityIdentifier("journey.catalog.loading")
+                } else if let error = catalog.errorMessage {
+                    ContentUnavailableView {
+                        Label("Catalog unavailable", systemImage: "exclamationmark.triangle")
+                    } description: { Text(error) } actions: { Button { journey.loadCatalog() } label: { Text("Retry").frame(minHeight: 44) } }
+                } else if catalog.items.isEmpty {
+                    ContentUnavailableView("No results", systemImage: "magnifyingglass", description: Text("Try another title or clear the search."))
+                } else {
+                    Section("Catalog") {
+                        ForEach(catalog.items, id: \.id) { media in
+                            Button { journey.openAnime(media.id) } label: {
+                                HStack(spacing: 12) {
+                                    CatalogCover(address: media.coverImage.best)
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        Text(media.title.preferred).font(.headline).foregroundStyle(.primary)
+                                            .fixedSize(horizontal: false, vertical: true)
+                                        Text(media.format ?? (journey.isDemo ? "Original demo" : "Anime")).font(.caption).foregroundStyle(.secondary)
+                                    }
+                                    Spacer()
+                                    Image(systemName: "chevron.right").accessibilityHidden(true)
+                                }.padding(.vertical, 4).frame(minHeight: 44, alignment: .leading)
+                            }.accessibilityHint("Show anime details and available episodes")
+                                .accessibilityIdentifier("journey.anime.\(media.id)")
+                        }
                     }
-                }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal)
-            }
-            if catalog.isLoading {
-                ProgressView("Loading catalog…").accessibilityIdentifier("journey.catalog.loading")
-                Spacer()
-            } else if let error = catalog.errorMessage {
-                ContentUnavailableView {
-                    Label("Catalog unavailable", systemImage: "exclamationmark.triangle")
-                } description: { Text(error) } actions: { Button { journey.loadCatalog() } label: { Text("Retry").frame(minHeight: 44) } }
-            } else if catalog.items.isEmpty {
-                ContentUnavailableView("No results", systemImage: "magnifyingglass", description: Text("Try another title or clear the search."))
-            } else {
-                List(catalog.items, id: \.id) { media in
-                    Button { journey.openAnime(media.id) } label: {
-                        HStack(spacing: 12) {
-                            Image(systemName: "film.stack").font(.title2).foregroundStyle(.secondary).accessibilityHidden(true)
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(media.title.preferred).font(.headline).foregroundStyle(.primary)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                Text(media.format ?? (journey.isDemo ? "Original demo" : "Anime")).font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            Image(systemName: "chevron.right").accessibilityHidden(true)
-                        }.padding(.vertical, 4).frame(minHeight: 44, alignment: .leading)
-                    }.accessibilityHint("Show anime details and available episodes")
-                        .accessibilityIdentifier("journey.anime.\(media.id)")
-                }.accessibilityIdentifier("journey.catalog")
+                }
+            }.accessibilityIdentifier("journey.catalog")
+        }
+    }
+    @ViewBuilder private var continueWatching: some View {
+        if !history.continuing.isEmpty {
+            Section("Continue Watching") {
+                ForEach(history.continuing, id: \.historyRowID) { record in
+                    Button { journey.continueWatching(record) } label: {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(record.title).font(.headline)
+                            Text("\(record.episodeTitle) · \(Int(record.positionMs / 1_000)) seconds")
+                                .font(.caption).foregroundStyle(.secondary)
+                        }.frame(minHeight: 44, alignment: .leading)
+                    }
+                    .accessibilityHint("Resume this episode from its saved position")
+                    .accessibilityIdentifier("history.continue.\(record.identity.episodeId)")
+                }
             }
         }
     }
+
 }
 
 private struct JourneyDetailsScreen: View {
     @ObservedObject var journey: JourneyModel
     @ObservedObject var details: CatalogDetailsModel
     @ObservedObject var history: WatchHistoryModel
+    @ObservedObject var downloads: OfflineDownloadEngine
 
     var body: some View {
         List {
@@ -131,6 +139,7 @@ private struct JourneyDetailsScreen: View {
                 Button { journey.retryDetails() } label: { Text("Retry details").frame(minHeight: 44) }
             } else if let media = details.media {
                 Section {
+                    CatalogCover(address: media.coverImage.best)
                     Text(media.title.preferred).font(.title2).accessibilityAddTraits(.isHeader)
                         .fixedSize(horizontal: false, vertical: true)
                     if let description = media.synopsis { Text(description) }
@@ -159,6 +168,12 @@ private struct JourneyDetailsScreen: View {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text("Episode \(episode.number) · \(episode.title)").foregroundStyle(.primary)
                                         .fixedSize(horizontal: false, vertical: true)
+                                    if downloads.records.contains(where: {
+                                        $0.identity == journey.downloadIdentity(for: episode) && $0.state == .completed
+                                    }) {
+                                        Label("Downloaded", systemImage: "arrow.down.circle.fill")
+                                            .font(.caption).foregroundStyle(.secondary)
+                                    }
                                     if let record = history.record(for: episode) {
                                         Text(record.completed ? "Watched" : (record.positionMs > 0 ? "Resume at \(Int(record.positionMs / 1_000)) seconds" : "Unwatched"))
                                             .font(.caption).foregroundStyle(.secondary)
