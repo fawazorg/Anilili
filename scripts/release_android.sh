@@ -95,7 +95,26 @@ PY
         if "$build_tools/apksigner" verify --min-sdk-version 22 "$apk" > "$signature_log" 2>&1; then
             fail "$flavor dry-run APK was unexpectedly signed"
         fi
-        grep -Fq 'No JAR signatures' "$signature_log" || fail "$flavor APK did not verify as intentionally unsigned"
+        grep -Exq 'ERROR: (Missing META-INF/MANIFEST\.MF|No JAR signatures)' "$signature_log" ||
+            fail "$flavor APK did not verify as intentionally unsigned"
+        python3 - "$apk" <<'PYAPK'
+from pathlib import PurePosixPath
+import sys
+import zipfile
+
+with open(sys.argv[1], "rb") as apk, zipfile.ZipFile(apk) as archive:
+    for entry in archive.namelist():
+        path = PurePosixPath(entry.upper())
+        if path.parent == PurePosixPath("META-INF") and (
+            path.suffix in {".SF", ".RSA", ".DSA", ".EC"} or path.name.startswith("SIG-")
+        ):
+            sys.exit("Unsigned APK contains a JAR signature")
+    # The APK v2/v3 signing block ends at the central directory, with a fixed 16-byte magic.
+    if archive.start_dir >= 16:
+        apk.seek(archive.start_dir - 16)
+        if apk.read(16) == b"APK Sig Block 42":
+            sys.exit("Unsigned APK contains an APK signing block")
+PYAPK
     fi
 
     flavor_suffix=
@@ -120,6 +139,7 @@ import re
 import subprocess
 import sys
 import tomllib
+import xml.etree.ElementTree as ET
 
 signing, certificate, version, build, java_bin = sys.argv[1:]
 wrapper = Path("gradle/wrapper/gradle-wrapper.properties").read_text()
@@ -128,9 +148,19 @@ if not gradle:
     sys.exit("Could not read the Gradle wrapper version")
 with Path("gradle/libs.versions.toml").open("rb") as catalog:
     kotlin = tomllib.load(catalog)["versions"]["kotlin"]
+tests = {}
+for flavor in ("Mobile", "Tv"):
+    folder = Path("app/build/test-results") / f"test{flavor}ReleaseUnitTest"
+    suites = [ET.parse(report).getroot() for report in folder.glob("TEST-*.xml")]
+    totals = {key: sum(int(suite.get(key, 0)) for suite in suites)
+              for key in ("tests", "skipped", "failures", "errors")}
+    if totals["tests"] <= totals["skipped"] or totals["failures"] or totals["errors"]:
+        sys.exit(f"{flavor} release unit tests did not execute successfully")
+    tests[flavor.lower()] = totals
 metadata = {
     "commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
     "configuration": "Release",
+    "unit_tests": tests,
     "java": subprocess.check_output([java_bin, "-version"], text=True, stderr=subprocess.STDOUT).splitlines()[0],
     "gradle": gradle[1],
     "kotlin": kotlin,

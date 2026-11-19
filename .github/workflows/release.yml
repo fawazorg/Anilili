@@ -77,23 +77,6 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEY_ALIAS || '' }}
           ANDROID_KEY_PASSWORD: ${{ needs.plan.outputs.mode == 'publish' && secrets.ANDROID_KEY_PASSWORD || '' }}
         run: bash scripts/release_android.sh
-      - name: Require Android Release unit-test results
-        run: |
-          python3 - <<'PYTEST'
-          from pathlib import Path
-          import xml.etree.ElementTree as ET
-
-          for flavor in ("Mobile", "Tv"):
-              reports = Path(f"app/build/test-results/test{flavor}ReleaseUnitTest")
-              suites = [ET.parse(path).getroot() for path in reports.glob("TEST-*.xml")]
-              total, skipped, failures, errors = (
-                  sum(int(suite.get(key, 0)) for suite in suites)
-                  for key in ("tests", "skipped", "failures", "errors")
-              )
-              if total <= skipped or failures or errors:
-                  raise SystemExit(f"Android {flavor} Release tests did not pass")
-              print(f"{flavor} Release passed {total - skipped} tests, skipped {skipped}")
-          PYTEST
       - name: Preserve Android Release test results
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -101,6 +84,13 @@ jobs:
           name: android-release-test-results
           path: app/build/test-results/test*ReleaseUnitTest/
           retention-days: 7
+      - name: Preserve Release crash mappings
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: android-r8-mappings
+          path: app/build/outputs/mapping-archive/*.txt
+          if-no-files-found: error
+          retention-days: 30
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: release-android
