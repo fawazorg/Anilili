@@ -146,6 +146,28 @@ final class LifecycleTests: XCTestCase {
         XCTAssertNil(model.playback.player.currentItem)
     }
 
+    func testLateEndNotificationAndPlayCannotReviveFailedItem() async throws {
+        let audio = LifecycleAudioSession()
+        let model = PlaybackModel(notificationCenter: NotificationCenter(), audioSession: audio)
+        defer { model.stop() }
+        model.load(try fixture())
+        try await waitUntil { model.state == "Ready" }
+        let item = try XCTUnwrap(model.player.currentItem)
+
+        NotificationCenter.default.post(name: AVPlayerItem.failedToPlayToEndTimeNotification, object: item)
+        try await waitUntil { model.errorMessage != nil }
+        NotificationCenter.default.post(name: AVPlayerItem.didPlayToEndTimeNotification, object: item)
+        model.play()
+        XCTAssertNil(audio.owner, "A failed item must not reactivate the audio session")
+        try await Task.sleep(nanoseconds: 100_000_000)
+        XCTAssertEqual(model.state, "Error")
+        XCTAssertEqual(model.player.rate, 0)
+
+        model.load(try fixture())
+        model.play()
+        try await waitUntil { model.seconds > 0.5 }
+    }
+
     func testRepeatedLoadsAndCleanupDoNotReviveObsoleteItem() async throws {
         let model = PlaybackModel(notificationCenter: NotificationCenter(), audioSession: LifecycleAudioSession())
         defer { model.stop() }

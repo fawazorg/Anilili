@@ -119,6 +119,7 @@ import com.anilili.util.webViewRefererHeaders
 import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.Json
@@ -292,6 +293,7 @@ fun EmbedWebView(
     // It also names which stream a progress tick belongs to — a page the app has already
     // navigated away from must not have its clock attributed to the next episode.
     val lastRequestedUrl = remember { object { var value: String? = null } }
+    val probePageGeneration = remember { object { var value = 0L } }
     val currentPendingSeekMs by rememberUpdatedState(pendingSeekMs)
     var positionMs by perStream.positionMs
     var durationMs by perStream.durationMs
@@ -593,10 +595,11 @@ fun EmbedWebView(
     // video's state. kwik intermittently serves a page variant the document-start bridge never
     // fires on, which used to demote the player to the reduced fallback bar (inverted play/pause
     // guess, no double-tap seek, no skip intro). One probe per second is negligible, and both
-    // channels write the same state so they can coexist.
+    // channels write the same state. Prefer fresh bridge data when a probe finishes.
     LaunchedEffect(webView, activeUrl, loadError) {
         val web = webView ?: return@LaunchedEffect
         if (loadError != null) return@LaunchedEffect
+        val probeUrl = activeUrl
         var probeActivated = false
         while (true) {
             delay(1_000)
@@ -605,8 +608,28 @@ fun EmbedWebView(
             // write that recomposes the player — a second of work a second, doubled for nothing.
             // A page variant the bridge never reaches (kwik's) leaves the stamp at zero, so the
             // probe carries on there exactly as before.
-            if (SystemClock.elapsedRealtime() - lastBridgeTickMs.get() < BRIDGE_TICK_FRESH_MS) continue
+            if (!shouldApplyEmbedProbe(
+                    effectActive = isActive,
+                    samePage = true,
+                    probeUrl = probeUrl,
+                    requestedUrl = lastRequestedUrl.value,
+                    lastBridgeTickMs = lastBridgeTickMs.get(),
+                    nowMs = SystemClock.elapsedRealtime(),
+                )
+            ) continue
+            val requestedPage = probePageGeneration.value
             web.evaluateJavascript(VIDEO_PROBE_JS) { raw ->
+                // The WebView callback can outlive its LaunchedEffect and a new page load.
+                if (!shouldApplyEmbedProbe(
+                        effectActive = isActive,
+                        samePage = webView === web && currentActiveUrl == probeUrl &&
+                            requestedPage == probePageGeneration.value && loadError == null,
+                        probeUrl = probeUrl,
+                        requestedUrl = lastRequestedUrl.value,
+                        lastBridgeTickMs = lastBridgeTickMs.get(),
+                        nowMs = SystemClock.elapsedRealtime(),
+                    )
+                ) return@evaluateJavascript
                 val parts = raw?.trim('"')?.split(',') ?: return@evaluateJavascript
                 if (parts.size != 5) return@evaluateJavascript
                 val positionSec = parts[0].toDoubleOrNull() ?: return@evaluateJavascript
@@ -626,7 +649,7 @@ fun EmbedWebView(
                 fallbackIsPlaying = playing
                 webVolume = if (muted) 0f else volume.toFloat().coerceIn(0f, 1f)
                 if (playing) {
-                    lastRequestedUrl.value?.let { currentOnProgress?.invoke(it, positionMs, durationMs) }
+                    currentOnProgress?.invoke(probeUrl, positionMs, durationMs)
                 }
             }
         }
@@ -1209,6 +1232,7 @@ fun EmbedWebView(
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                probePageGeneration.value++
                 loadError = null
                 finishedUrl = null
                 DiagnosticsLog.event("EmbedWebView page started host=${url.hostOrNone()}")
@@ -1771,6 +1795,7 @@ fun EmbedWebView(
                 val headers = webViewRefererHeaders(activeReferer)
                 if (lastRequestedUrl.value != activeUrl) {
                     lastRequestedUrl.value = activeUrl
+                    probePageGeneration.value++
                     navigationLock.locked = false // allow the new embed's own redirect chain
                     DiagnosticsLog.event("EmbedWebView loadUrl host=${activeUrl.hostOrNone()} headers=${headers.keys.joinToString()}")
                     val needsAllAnimeShell = activeUrl.requiresAllAnimeIframeShell(activeReferer)
@@ -2693,6 +2718,16 @@ private const val MAX_LOGGED_FOREIGN_ORIGINS = 40
 
 /** How recent a bridge tick must be for the main-frame probe to stand down. */
 private const val BRIDGE_TICK_FRESH_MS = 2_500L
+
+internal fun shouldApplyEmbedProbe(
+    effectActive: Boolean,
+    samePage: Boolean,
+    probeUrl: String,
+    requestedUrl: String?,
+    lastBridgeTickMs: Long,
+    nowMs: Long,
+): Boolean = effectActive && samePage && probeUrl == requestedUrl &&
+    (lastBridgeTickMs == 0L || nowMs - lastBridgeTickMs >= BRIDGE_TICK_FRESH_MS)
 
 /**
  * Origins an embed is refused, matched on the registrable domain and any subdomain of it.

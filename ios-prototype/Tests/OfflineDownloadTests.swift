@@ -174,6 +174,30 @@ final class OfflineDownloadTests: XCTestCase {
         XCTAssertEqual(downloads.storageUsage, 0)
     }
 
+    func testPauseDuringProgressiveFinalizationRemovesStagedMedia() async throws {
+        let storage = store()
+        weak var active: OfflineDownloadEngine?
+        var pausedKey: String?
+        let downloads = OfflineDownloadEngine(store: storage, allowLoopback: true,
+            backgroundIdentifier: "org.anilili.offline.tests." + UUID().uuidString,
+            fingerprint: { store, key in
+                guard let active, let record = active.records.first else { return nil }
+                XCTAssertTrue(store.mediaExists(key: key))
+                let checksum = try? store.calculatedFingerprint(key: key)
+                active.pause(record: record)
+                pausedKey = key
+                return checksum
+            })
+        active = downloads
+        defer { downloads.shutdown() }
+        XCTAssertTrue(download(downloads))
+        try await waitUntil("pause during MP4 verification") { pausedKey != nil || downloads.records.first?.state == .failed }
+        let key = try XCTUnwrap(pausedKey, downloads.errorMessage ?? "MP4 verification did not begin")
+        XCTAssertEqual(downloads.records.first?.state, .paused)
+        XCTAssertFalse(storage.hasMediaOrReceipt(key: key))
+        XCTAssertNil(downloads.localURL(identity: identity()))
+    }
+
     func testStorageExhaustionAndHTTPFailureNeverCreateCompletedMedia() async throws {
         let full = engine(store(), diskSpace: { 0 })
         defer { full.shutdown() }

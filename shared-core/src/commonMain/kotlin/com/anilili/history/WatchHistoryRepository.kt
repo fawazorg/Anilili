@@ -136,7 +136,7 @@ class WatchHistoryRepository(private val storage: WatchHistoryStorage, private v
             if (document.records.any { !validIdentity(it.identity) || it.positionMs < 0 || it.durationMs < 0 || it.updatedAtMs < 0 || it.generation < 0 || it.lastSequence < 0 }) {
                 return HistoryResult(error = "Invalid history data; existing data preserved")
             }
-            val records = WatchProgressPolicy.latestFirst(document.records) { it.updatedAtMs }
+            val records = document.records
                 .sortedWith(compareByDescending<WatchProgress> { it.updatedAtMs }.thenByDescending { it.generation }.thenByDescending { it.lastSequence })
                 .distinctBy { it.identity }
             HistoryResult(records)

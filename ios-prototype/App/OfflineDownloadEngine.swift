@@ -17,6 +17,7 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
     private let diskSpace: () -> Int64
     private let identifier: String
     private let now: () -> Int64
+    private let fingerprint: @MainActor (OfflineDownloadStore, String) async -> String?
     private var sources: [String: PlaybackSource] = [:]
     private var resumeData: [String: (PlaybackSource, Data)] = [:]
     private var jobs: [Int: Job] = [:]
@@ -61,9 +62,13 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
 
     init(store: OfflineDownloadStore = OfflineDownloadStore(), allowLoopback: Bool = false,
          backgroundIdentifier: String = OfflineDownloadEngine.backgroundIdentifier,
-         diskSpace: (() -> Int64)? = nil, now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) }) {
+         diskSpace: (() -> Int64)? = nil, now: @escaping () -> Int64 = { Int64(Date().timeIntervalSince1970 * 1000) },
+         fingerprint: @escaping @MainActor (OfflineDownloadStore, String) async -> String? = { store, key in
+             await Task.detached(priority: .utility) { try? store.calculatedFingerprint(key: key) }.value
+         }) {
         self.store = store; self.allowLoopback = allowLoopback; identifier = backgroundIdentifier
         self.diskSpace = diskSpace ?? { store.availableBytes() }; self.now = now
+        self.fingerprint = fingerprint
         repository = DownloadRepository(storage: store)
         super.init()
         foreground = UIApplication.shared.applicationState != .background
@@ -240,6 +245,12 @@ final class OfflineDownloadEngine: NSObject, ObservableObject {
         if let job = jobs.values.first(where: { same($0.session.identity, record.identity) }) {
             jobs.removeValue(forKey: job.task.taskIdentifier)
             if let task = job.task as? URLSessionDownloadTask {
+                // A file staged for verification is no longer owned by URLSession.
+                // The obsolete finalizer will exit without publishing it.
+                if job.stagedURL != nil {
+                    do { try store.remove(key: job.key) }
+                    catch { errorMessage = "The paused download could not be cleaned up." }
+                }
                 let source = job.profile
                 let generation = records.first(where: { same($0.identity, record.identity) })?.generation
                 task.cancel { [weak self] data in
@@ -521,9 +532,7 @@ extension OfflineDownloadEngine: URLSessionDownloadDelegate, AVAssetDownloadDele
                     self.failed(task, kind: .corrupt, message: "Downloaded media is not playable offline."); return
                 }
                 if task is URLSessionDownloadTask {
-                    let files = self.store
-                    let mediaKey = job.key
-                    let fingerprint = await Task.detached(priority: .utility) { try? files.calculatedFingerprint(key: mediaKey) }.value
+                    let fingerprint = await self.fingerprint(self.store, job.key)
                     guard self.jobs[task.taskIdentifier]?.session.generation == job.session.generation,
                           self.jobs[task.taskIdentifier]?.task === task else { return }
                     guard let fingerprint else {
